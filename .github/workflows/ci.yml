@@ -14,8 +14,8 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         ocaml: ["4.14", "5.2", "5.4"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: ocaml/setup-ocaml@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
         with:
           ocaml-compiler: ${{ matrix.ocaml }}
       - run: opam install . --deps-only --with-test --with-doc
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     container: ocaml/opam:alpine-ocaml-5.4
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: sudo chown -R opam . && opam install . --deps-only --with-test
       - run: opam exec -- dune build @install @runtest
 
@@ -44,8 +44,8 @@ jobs:
         include:
           - { name: windows-mingw, os: windows-latest, ocaml: "5.4" }
     steps:
-      - uses: actions/checkout@v4
-      - uses: ocaml/setup-ocaml@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
         with:
           ocaml-compiler: ${{ matrix.ocaml }}
       - run: opam install . --deps-only --with-test
@@ -57,8 +57,8 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: ocaml/setup-ocaml@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
         with:
           ocaml-compiler: "5.4"
       - run: opam install ocaml-solo5 dune-configurator
