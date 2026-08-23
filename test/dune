@@ -100,6 +100,15 @@
    (secret.unix -> test_unix_impl.posix.ml)
    (-> test_unix_impl.skip.ml))))
 
+(test
+ (name test_unix_wipe)
+ (modules test_unix_wipe)
+ (enabled_if
+  (and
+   (<> %{os_type} Win32)
+   %{lib-available:secret.unix}))
+ (libraries secret secret.unix helpers alcotest unix))
+
 (executable
  (name leak_scan)
  (modules leak_scan)

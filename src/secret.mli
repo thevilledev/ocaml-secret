@@ -80,10 +80,10 @@ val of_string : ?hardened:bool -> string -> t
 
 val of_bytes : ?hardened:bool -> wipe_source:bool -> bytes -> t
 (** [of_bytes ~wipe_source b] copies [b]. With [~wipe_source:true] the source
-    is zeroized afterwards with the same primitive as {!destroy}. This cannot
-    reach copies the GC may already have made of [b] (a [bytes] allocated in
-    the minor heap is copied when promoted); use {!Scratch} buffers to avoid
-    that. *)
+    is zeroized afterwards with the same primitive as {!destroy}, including
+    if allocation or copying raises. This cannot reach copies the GC may
+    already have made of [b] (a [bytes] allocated in the minor heap is copied
+    when promoted); use {!Scratch} buffers to avoid that. *)
 
 val init : ?hardened:bool -> int -> (bytes -> unit) -> t
 (** [init n f] creates a secret of [n] bytes and calls [f] with a zero-copy

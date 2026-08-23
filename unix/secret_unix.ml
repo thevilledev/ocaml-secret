@@ -18,41 +18,53 @@ let read_exactly fd t ~off ~len =
 let read_fd ?hardened fd n =
   if n < 0 then invalid_arg "Secret_unix.read_fd";
   let t = Secret.create ?hardened n in
+  let keep = ref false in
   let rec go off =
     if off < n then
       let r = read fd t ~off ~len:(n - off) in
       if r = 0 then off else go (off + r)
     else off
   in
-  let got = go 0 in
-  if got = n then t
-  else begin
-    let r = Secret.sub t ~off:0 ~len:got in
-    Secret.destroy t;
-    r
-  end
+  Fun.protect
+    ~finally:(fun () -> if not !keep then Secret.destroy t)
+    (fun () ->
+      let got = go 0 in
+      if got = n then begin
+        keep := true;
+        t
+      end
+      else Secret.sub t ~off:0 ~len:got)
 
 let read_file ?hardened ?max path =
   let fd = Unix.openfile path [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 in
-  Fun.protect
-    ~finally:(fun () -> Unix.close fd)
-    (fun () ->
-      let n =
-        match max with
-        | Some m -> m
-        | None -> (
-            let st = Unix.fstat fd in
-            match st.Unix.st_kind with
-            | Unix.S_REG -> st.Unix.st_size
-            | _ -> 1 lsl 20)
-      in
-      read_fd ?hardened fd n)
+  match
+    (let n =
+       match max with
+       | Some m -> m
+       | None -> (
+           let st = Unix.fstat fd in
+           match st.Unix.st_kind with
+           | Unix.S_REG -> st.Unix.st_size
+           | _ -> 1 lsl 20)
+     in
+     read_fd ?hardened fd n)
+  with
+  | t -> (
+      match Unix.close fd with
+      | () -> t
+      | exception e ->
+          Secret.destroy t;
+          raise e)
+  | exception e ->
+      (try Unix.close fd with _ -> ());
+      raise e
 
 let write_all fd t =
   let n = Secret.length t in
   let rec go off =
     if off < n then
       let w = write fd t ~off ~len:(n - off) in
-      go (off + w)
+      if w = 0 then raise (Unix.Unix_error (Unix.EIO, "write", ""))
+      else go (off + w)
   in
   go 0

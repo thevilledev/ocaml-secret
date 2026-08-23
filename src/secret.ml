@@ -198,11 +198,13 @@ let of_string ?hardened s =
   t
 
 let of_bytes ?hardened ~wipe_source b =
-  let n = Bytes.length b in
-  let t = create ?hardened n in
-  check_rc "Secret.of_bytes" (blit_from_string_c (Bytes.unsafe_to_string b) 0 t 0 n);
-  if wipe_source then wipe_bytes_c b;
-  t
+  let copy () =
+    let n = Bytes.length b in
+    let t = create ?hardened n in
+    check_rc "Secret.of_bytes" (blit_from_string_c (Bytes.unsafe_to_string b) 0 t 0 n);
+    t
+  in
+  if wipe_source then Fun.protect ~finally:(fun () -> wipe_bytes_c b) copy else copy ()
 
 let with_secret ?hardened n f =
   let t = create ?hardened n in

@@ -21,12 +21,14 @@ val read_exactly : Unix.file_descr -> Secret.t -> off:int -> len:int -> unit
 val read_fd : ?hardened:bool -> Unix.file_descr -> int -> Secret.t
 (** [read_fd fd n] reads up to [n] bytes into a new secret (looping on short
     reads until [n] bytes or end of file). The result has the number of bytes
-    actually read as its length. *)
+    actually read as its length. A partially filled secret is destroyed if
+    reading or sizing the result raises. *)
 
 val read_file : ?hardened:bool -> ?max:int -> string -> Secret.t
 (** [read_file path] opens [path] read-only ([O_CLOEXEC]), reads at most
     [max] bytes (default: the file size from [fstat], or 1 MiB for
-    non-regular files) into a new secret and closes the descriptor.
+    non-regular files) into a new secret and closes the descriptor. If closing
+    the descriptor raises, the result is destroyed before the error escapes.
     @raise Unix.Unix_error *)
 
 val write : Unix.file_descr -> Secret.t -> off:int -> len:int -> int
