@@ -46,6 +46,13 @@
    memory. Larger unviewed blocks are released. */
 #define SECRET_POOL_MAX_BSZ   (64 * 1024)
 
+/* Bound cached, unowned memory. Viewed blocks that do not fit in the pool
+   still have to remain mapped, but ordinary create/destroy traffic must not
+   grow the process indefinitely. This limit applies independently to each
+   allocation tier. */
+#define SECRET_POOL_MAX_COUNT 64
+#define SECRET_POOL_MAX_PER_CLASS 8
+
 /* Bytes between the allocation base and the OCaml header in tier (a):
    [link/pad 8][header 8][payload]. */
 #define SECRET_PREFIX_BYTES   16
@@ -54,6 +61,7 @@
 
 struct secret_hdr {
   _Atomic(uintptr_t) ptr;      /* payload pointer; 0 <=> destroyed */
+  unsigned char *retired;      /* wiped by wipe_all/atfork; release at finalize */
   unsigned char *raw;          /* base of the allocation or mapping */
   size_t raw_size;             /* size of the allocation or mapping */
   size_t len;                  /* logical length */
@@ -77,8 +85,8 @@ size_t secret_page_size(void);
    payload is zero-filled and carries a valid OCaml string header. */
 int secret_mem_alloc(struct secret_hdr *h, size_t len, uint32_t req_flags);
 
-/* Return the (already zeroized) payload of [h] to the pool or the OS. Must be
-   called with the registry lock held. */
+/* Return the (already zeroized) payload of [h] to the pool or the OS. Must not
+   be called with the registry lock held. */
 void secret_mem_release(struct secret_hdr *h, unsigned char *payload);
 
 /* Re-establish page locking after fork. Returns 0/-1. */

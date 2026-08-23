@@ -90,11 +90,14 @@ static uint64_t secret_canary_value(void)
 #define POOL_SLOTS (SECRET_POOL_MAX_BSZ / 8 + 1)
 static unsigned char *pool_a[POOL_SLOTS];
 static unsigned char *pool_b[POOL_SLOTS];
+static size_t pool_a_slot_counts[POOL_SLOTS];
+static size_t pool_b_slot_counts[POOL_SLOTS];
 static size_t pool_a_count = 0, pool_b_count = 0;
 
 #define Link_slot(payload) ((unsigned char **) ((payload) - 16))
 
-static unsigned char *pool_pop(unsigned char **pool, size_t *count, size_t bsz)
+static unsigned char *pool_pop(unsigned char **pool, size_t *slot_counts,
+                               size_t *count, size_t bsz)
 {
   size_t idx = bsz / 8;
   unsigned char *p = NULL;
@@ -103,6 +106,7 @@ static unsigned char *pool_pop(unsigned char **pool, size_t *count, size_t bsz)
     p = pool[idx];
     if (p) {
       pool[idx] = *Link_slot(p);
+      slot_counts[idx]--;
       (*count)--;
     }
     secret_registry_unlock();
@@ -111,19 +115,33 @@ static unsigned char *pool_pop(unsigned char **pool, size_t *count, size_t bsz)
   return p;
 }
 
-static void pool_push(unsigned char **pool, size_t *count, size_t bsz,
-                      unsigned char *payload)
+static int pool_push(unsigned char **pool, size_t *slot_counts, size_t *count,
+                     size_t bsz, unsigned char *payload)
 {
   size_t idx = bsz / 8;
+  int inserted = 0;
   /* caller guarantees idx < POOL_SLOTS */
   secret_registry_lock();
-  *Link_slot(payload) = pool[idx];
-  pool[idx] = payload;
-  (*count)++;
+  if (*count < SECRET_POOL_MAX_COUNT &&
+      slot_counts[idx] < SECRET_POOL_MAX_PER_CLASS) {
+    *Link_slot(payload) = pool[idx];
+    pool[idx] = payload;
+    slot_counts[idx]++;
+    (*count)++;
+    inserted = 1;
+  }
   secret_registry_unlock();
+  return inserted;
 }
 
-size_t secret_pool_count(void) { return pool_a_count + pool_b_count; }
+size_t secret_pool_count(void)
+{
+  size_t count;
+  secret_registry_lock();
+  count = pool_a_count + pool_b_count;
+  secret_registry_unlock();
+  return count;
+}
 
 /* A block that is too large for the pool but has been viewed must stay
    mapped forever; we keep such blocks on a separate "parking" list so the
@@ -141,7 +159,8 @@ static int tier_a_alloc(struct secret_hdr *h, uint32_t req_flags)
   unsigned char *payload = NULL;
   unsigned char *raw;
 
-  if (bsz <= SECRET_POOL_MAX_BSZ) payload = pool_pop(pool_a, &pool_a_count, bsz);
+  if (bsz <= SECRET_POOL_MAX_BSZ)
+    payload = pool_pop(pool_a, pool_a_slot_counts, &pool_a_count, bsz);
   if (payload == NULL) {
     raw = (unsigned char *) calloc(1, SECRET_PREFIX_BYTES + bsz);
     if (raw == NULL) return -1;
@@ -162,9 +181,11 @@ static int tier_a_alloc(struct secret_hdr *h, uint32_t req_flags)
 static void tier_a_release(struct secret_hdr *h, unsigned char *payload, int viewed)
 {
   size_t bsz = h->bsz;
-  if (bsz <= SECRET_POOL_MAX_BSZ) {
-    pool_push(pool_a, &pool_a_count, bsz, payload);
-  } else if (viewed) {
+  if (bsz <= SECRET_POOL_MAX_BSZ &&
+      pool_push(pool_a, pool_a_slot_counts, &pool_a_count, bsz, payload)) {
+    return;
+  }
+  if (viewed) {
     park_forever(payload);
   } else {
     free(payload - SECRET_PREFIX_BYTES);
@@ -230,7 +251,8 @@ static int tier_b_alloc(struct secret_hdr *h, uint32_t req_flags)
   if (page == 0) return -1;
   tier_b_geometry(bsz, page, &inner, &map_size);
 
-  if (bsz <= SECRET_POOL_MAX_BSZ) payload = pool_pop(pool_b, &pool_b_count, bsz);
+  if (bsz <= SECRET_POOL_MAX_BSZ)
+    payload = pool_pop(pool_b, pool_b_slot_counts, &pool_b_count, bsz);
   if (payload != NULL) {
     raw = payload + bsz - inner - page;
     f |= SF_PAGE_BACKED | SF_GUARDED;
@@ -270,9 +292,11 @@ static void tier_b_release(struct secret_hdr *h, unsigned char *payload, int vie
   size_t bsz = h->bsz, inner, map_size;
   tier_b_geometry(bsz, page, &inner, &map_size);
   secret_mem_unlock(h);
-  if (bsz <= SECRET_POOL_MAX_BSZ) {
-    pool_push(pool_b, &pool_b_count, bsz, payload);
-  } else if (viewed) {
+  if (bsz <= SECRET_POOL_MAX_BSZ &&
+      pool_push(pool_b, pool_b_slot_counts, &pool_b_count, bsz, payload)) {
+    return;
+  }
+  if (viewed) {
     park_forever(payload);
   } else {
     munmap(h->raw, map_size);

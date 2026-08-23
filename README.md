@@ -74,8 +74,8 @@ Be precise about this; the library's documentation is too.
 
 ## Tiers
 
-- **default** (`Secret.create n`): `calloc` memory, zero on release, pooled
-  reuse. ~80 ns per create+destroy. For many small or short-lived keys.
+- **default** (`Secret.create n`): `calloc` memory, zero on release, bounded
+  pooled reuse. ~80 ns per create+destroy. For many small or short-lived keys.
 - **hardened** (`Secret.create ~hardened:true n`): its own mapping with guard
   pages and a canary, `mlock`, core-dump exclusion where the OS supports it.
   3 pages of address space and ~2 µs per secret. For a few long-lived keys.

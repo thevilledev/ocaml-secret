@@ -173,8 +173,9 @@ val copy : ?hardened:bool -> t -> t
 
 val destroy : t -> unit
 (** Zeroizes the contents now and releases the memory (the memory is pooled
-    for other secrets, never handed back to the C allocator while a view
-    could exist). Idempotent. After this every accessor raises {!Destroyed}.
+    for other secrets in a bounded reuse cache, never handed back to the C
+    allocator while an unscoped view could exist). Idempotent. After this
+    every accessor raises {!Destroyed}.
     Destroy secrets as soon as they are no longer needed: relying on the GC
     delays the wipe until the handle is collected. *)
 
@@ -310,7 +311,9 @@ val wipe_all : unit -> unit
     registered later (i.e. after every handler of code that uses this
     module). Does not run on [Unix._exit], signals or runtime fatal errors;
     call it from your own signal handler if needed. Other domains using a
-    secret at the same time observe either {!Destroyed} or zeroed contents. *)
+    secret at the same time observe either {!Destroyed} or zeroed contents.
+    To keep those in-flight accesses memory-safe, wiped storage is released
+    when its owning handle is finalized. *)
 
 val live_count : unit -> int
 (** Number of secrets whose memory has not been released (diagnostics). *)

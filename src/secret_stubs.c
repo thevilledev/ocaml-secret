@@ -111,15 +111,27 @@ static void destroy_payload(struct secret_hdr *h, int release)
   secret_zeroize(payload, h->bsz - 1);
   atomic_store(&h->flags, f | SF_DESTROYED);
   if (release_hook != NULL) release_hook(payload, h->len, f);
-  if (release) secret_mem_release(h, payload);
+  if (release) {
+    secret_mem_release(h, payload);
+  } else {
+    /* wipe_all permits other domains to finish an in-flight access. Keep the
+       zeroed storage valid until the owning handle can be finalized, but do
+       not lose the pointer needed to release it then. The registry lock
+       serializes this store with finalization; the atfork child is single
+       threaded. */
+    h->retired = payload;
+  }
 }
 
 static void secret_finalize(value v)
 {
   struct secret_hdr *h = Secret_hdr_val(v);
+  unsigned char *retired;
   if (h == NULL) return;
   destroy_payload(h, 1);
   registry_unlink(h);
+  retired = h->retired;
+  if (retired != NULL) secret_mem_release(h, retired);
   free(h);
   Secret_hdr_val(v) = NULL;
 }
@@ -372,6 +384,15 @@ CAMLprim value secret_ml_view(value v)
   return (value) p;
 }
 
+/* A scoped view relies on its OCaml callback not retaining the value. It does
+   not force the allocation to remain mapped forever after destruction. */
+CAMLprim value secret_ml_scoped_view(value v)
+{
+  struct secret_hdr *h = Hdr(v);
+  unsigned char *p = live_payload(h);
+  return p == NULL ? empty_string_value() : (value) p;
+}
+
 CAMLprim value secret_ml_fill_random(value v)
 {
   struct secret_hdr *h = Hdr(v);
@@ -464,6 +485,7 @@ static void atfork_child(void)
     uintptr_t p = atomic_exchange(&h->ptr, (uintptr_t) 0);
     if (p != 0) {
       secret_zeroize((void *) p, h->bsz - 1);
+      h->retired = (unsigned char *) p;
       atomic_fetch_or(&h->flags, SF_DESTROYED | SF_FORK_WIPED);
     }
   }

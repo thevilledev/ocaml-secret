@@ -31,6 +31,7 @@ external blit_to_bytes_c : t -> int -> bytes -> int -> int -> int
 external equal_c : t -> t -> int = "secret_ml_equal" [@@noalloc]
 external equal_string_c : t -> string -> int = "secret_ml_equal_string" [@@noalloc]
 external view_c : t -> string = "secret_ml_view" [@@noalloc]
+external scoped_view_c : t -> string = "secret_ml_scoped_view" [@@noalloc]
 external fill_random_c : t -> int = "secret_ml_fill_random" [@@noalloc]
 external alloc_major_bytes_c : int -> bytes = "secret_ml_alloc_major_bytes"
 external wipe_bytes_c : bytes -> unit = "secret_ml_wipe_bytes" [@@noalloc]
@@ -124,13 +125,17 @@ end
 (* ---- views -------------------------------------------------------------------- *)
 
 module Unsafe = struct
+  let scoped_string_view t =
+    if is_destroyed_c t then raise Destroyed;
+    scoped_view_c t
+
   let string_view t =
     if is_destroyed_c t then raise Destroyed;
     view_c t
 
   let bytes_view t = Bytes.unsafe_of_string (string_view t)
-  let with_string_view t f = f (string_view t)
-  let with_bytes_view t f = f (bytes_view t)
+  let with_string_view t f = f (scoped_string_view t)
+  let with_bytes_view t f = f (Bytes.unsafe_of_string (scoped_string_view t))
 
   type nonrec bigstring = bigstring
 
@@ -150,7 +155,7 @@ end
 
 let init ?hardened n f =
   let t = create ?hardened n in
-  (match f (Unsafe.bytes_view t) with
+  (match f (Bytes.unsafe_of_string (Unsafe.scoped_string_view t)) with
   | () -> ()
   | exception e ->
       destroy t;
