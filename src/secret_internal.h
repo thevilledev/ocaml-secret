@@ -92,6 +92,10 @@ void secret_mem_release(struct secret_hdr *h, unsigned char *payload);
 /* Re-establish page locking after fork. Returns 0/-1. */
 int secret_mem_relock(struct secret_hdr *h);
 
+/* Apply or revoke MADV_WIPEONFORK for one live page-backed secret. The caller
+   must hold the registry lock so destruction cannot unmap the payload. */
+int secret_mem_set_wipeonfork(struct secret_hdr *h, int wipe);
+
 /* Unlock pages (used by the at-exit drain and release). */
 void secret_mem_unlock(struct secret_hdr *h);
 
@@ -132,7 +136,6 @@ void secret_set_release_hook(secret_release_hook_fn f);
 /* Registry lock; exported for secret_process.c / fork handling. */
 void secret_registry_lock(void);
 void secret_registry_unlock(void);
-void secret_registry_reset_after_fork(void);
 
 /* OCaml string block header for an out-of-heap block. */
 static inline header_t secret_string_header(mlsize_t wosize)

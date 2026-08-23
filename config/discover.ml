@@ -96,6 +96,9 @@ let () =
             probe ~name:"SECRET_HAVE_MADV_WIPEONFORK"
               ~includes:[ "sys/mman.h" ]
               ~body:"int f = MADV_WIPEONFORK; (void)f;";
+            probe ~name:"SECRET_HAVE_MADV_KEEPONFORK"
+              ~includes:[ "sys/mman.h" ]
+              ~body:"int f = MADV_KEEPONFORK; (void)f;";
             probe ~name:"SECRET_HAVE_MAP_CONCEAL"
               ~includes:[ "sys/mman.h" ]
               ~body:"int f = MAP_CONCEAL; (void)f;";
