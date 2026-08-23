@@ -1,0 +1,11 @@
+(library
+ (name secret_unix)
+ (public_name secret.unix)
+ (synopsis "Read and write secrets directly through file descriptors")
+ (enabled_if
+  (<> %{os_type} Win32))
+ (libraries secret unix)
+ (foreign_stubs
+  (language c)
+  (names secret_unix_stubs)
+  (include_dirs %{project_root}/src)))

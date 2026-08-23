@@ -1,0 +1,111 @@
+(library
+ (name helpers)
+ (modules helpers)
+ (libraries secret unix)
+ (foreign_stubs
+  (language c)
+  (names helpers_stubs)
+  (include_dirs %{project_root}/src)))
+
+(test
+ (name test_secret)
+ (modules test_secret)
+ (libraries secret alcotest unix))
+
+(test
+ (name test_gc)
+ (modules test_gc)
+ (libraries secret alcotest))
+
+(test
+ (name test_domains)
+ (modules test_domains)
+ (enabled_if
+  (>= %{ocaml_version} 5.0))
+ (libraries secret alcotest))
+
+(test
+ (name test_c_api)
+ (modules test_c_api)
+ (libraries secret helpers))
+
+(executable
+ (name atexit_child)
+ (modules atexit_child)
+ (libraries secret helpers unix))
+
+(executable
+ (name guard_child)
+ (modules guard_child)
+ (libraries secret helpers))
+
+(test
+ (name test_atexit)
+ (modules test_atexit)
+ (enabled_if
+  (and
+   (<> %{os_type} Win32)
+   (>= %{ocaml_version} 5.0)))
+ (deps %{exe:atexit_child.exe})
+ (action
+  (setenv
+   SECRET_CHILD_EXE
+   %{exe:atexit_child.exe}
+   (run %{test})))
+ (libraries secret helpers alcotest unix))
+
+(test
+ (name test_guard)
+ (modules test_guard)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (deps %{exe:guard_child.exe})
+ (action
+  (setenv
+   SECRET_CHILD_EXE
+   %{exe:guard_child.exe}
+   (run %{test})))
+ (libraries secret helpers alcotest unix))
+
+(test
+ (name test_fork)
+ (modules test_fork)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (libraries secret alcotest unix))
+
+(executable
+ (name test_mlock_limit)
+ (modules test_mlock_limit)
+ (libraries secret))
+
+(rule
+ (alias runtest)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (deps %{exe:test_mlock_limit.exe})
+ (action
+  (run sh -c "ulimit -l 0 && %{exe:test_mlock_limit.exe}")))
+
+(test
+ (name test_unix)
+ (modules test_unix)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (libraries secret secret.unix alcotest unix))
+
+(executable
+ (name leak_scan)
+ (modules leak_scan)
+ (libraries secret mirage-crypto mirage-crypto-rng mirage-crypto-rng.unix)
+ (foreign_stubs
+  (language c)
+  (names leak_scan_stubs)
+  (include_dirs %{project_root}/src)))
+
+(rule
+ (alias runtest)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (action
+  (run %{exe:leak_scan.exe})))

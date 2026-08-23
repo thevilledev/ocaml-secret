@@ -1,0 +1,13 @@
+(executable
+ (name alloc_bench)
+ (modules alloc_bench)
+ (libraries secret unix))
+
+(executable
+ (name ct_equal)
+ (modules ct_equal)
+ (libraries secret unix)
+ (foreign_stubs
+  (language c)
+  (names ct_stubs)
+  (include_dirs %{project_root}/src)))

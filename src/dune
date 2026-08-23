@@ -1,0 +1,19 @@
+(library
+ (name secret)
+ (public_name secret)
+ (synopsis "Secret key material outside the OCaml heap")
+ (foreign_stubs
+  (language c)
+  (names secret_stubs secret_alloc secret_zero secret_ct secret_random
+   secret_process secret_gc)
+  (flags
+   (:standard
+    (:include cflags.sexp))))
+ (c_library_flags
+  (:include clibs.sexp))
+ (install_c_headers secret))
+
+(rule
+ (targets secret_config.h cflags.sexp clibs.sexp)
+ (action
+  (run %{exe:../config/discover.exe})))
