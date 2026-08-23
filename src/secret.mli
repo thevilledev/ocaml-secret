@@ -331,8 +331,8 @@ val set_fork_policy : [ `Keep | `Wipe_in_child ] -> unit
 (** POSIX only (no-op elsewhere). [`Keep] (default): the child inherits
     copies of all secrets; memory locks are lost (see {!after_fork}).
     [`Wipe_in_child]: an [atfork] child handler zeroizes every secret in the
-    child; on Linux, hardened secrets created afterwards also get
-    [MADV_WIPEONFORK]. *)
+    child; on Linux, live and subsequently created hardened secrets also get
+    [MADV_WIPEONFORK]. Switching back to [`Keep] revokes that advice. *)
 
 val after_fork : unit -> unit
 (** Call in a forked child to re-establish [mlock] on hardened secrets. *)

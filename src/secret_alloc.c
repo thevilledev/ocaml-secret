@@ -233,9 +233,12 @@ static void tier_b_apply_advice(struct secret_hdr *h, unsigned char *inner_base,
 #else
   f |= SF_NODUMP_UNSUPPORTED;
 #endif
-#if defined(SECRET_HAVE_MADV_WIPEONFORK)
-  if (secret_get_fork_policy() && madvise(inner_base, inner, MADV_WIPEONFORK) == 0)
-    f |= SF_WIPEONFORK;
+#if defined(SECRET_HAVE_MADV_WIPEONFORK) && defined(SECRET_HAVE_MADV_KEEPONFORK)
+  if (secret_get_fork_policy()) {
+    if (madvise(inner_base, inner, MADV_WIPEONFORK) == 0) f |= SF_WIPEONFORK;
+  } else if (madvise(inner_base, inner, MADV_KEEPONFORK) == 0) {
+    f &= ~SF_WIPEONFORK;
+  }
 #endif
   h->fork_gen = secret_fork_generation_now();
   atomic_store(&h->flags, f);
@@ -379,6 +382,30 @@ int secret_mem_relock(struct secret_hdr *h)
 #endif
 }
 
+int secret_mem_set_wipeonfork(struct secret_hdr *h, int wipe)
+{
+#if SECRET_TIER_B && defined(SECRET_HAVE_MADV_WIPEONFORK) && \
+    defined(SECRET_HAVE_MADV_KEEPONFORK)
+  uint32_t f = atomic_load(&h->flags);
+  size_t page, inner, map_size;
+  int advice;
+  if (!(f & SF_PAGE_BACKED) || atomic_load(&h->ptr) == 0) return 0;
+  page = secret_page_size();
+  tier_b_geometry(h->bsz, page, &inner, &map_size);
+  advice = wipe ? MADV_WIPEONFORK : MADV_KEEPONFORK;
+  if (madvise(h->raw + page, inner, advice) != 0) return -1;
+  if (wipe)
+    atomic_fetch_or(&h->flags, SF_WIPEONFORK);
+  else
+    atomic_fetch_and(&h->flags, ~SF_WIPEONFORK);
+  return 0;
+#else
+  (void) h;
+  (void) wipe;
+  return -1;
+#endif
+}
+
 uint32_t secret_capabilities(void)
 {
   uint32_t c = 0;
@@ -390,7 +417,7 @@ uint32_t secret_capabilities(void)
 #if defined(SECRET_HAVE_MADV_DONTDUMP) || defined(SECRET_HAVE_MADV_NOCORE) || defined(SECRET_HAVE_MAP_CONCEAL)
   c |= CAP_CAN_NODUMP;
 #endif
-#if defined(SECRET_HAVE_MADV_WIPEONFORK)
+#if defined(SECRET_HAVE_MADV_WIPEONFORK) && defined(SECRET_HAVE_MADV_KEEPONFORK)
   c |= CAP_CAN_WIPEONFORK;
 #endif
 #endif
