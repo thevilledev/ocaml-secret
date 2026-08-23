@@ -6,7 +6,7 @@
    > explicit_memset (NetBSD) > memset_s (C11 Annex K, macOS)
    > SecureZeroMemory (Windows) > volatile function pointer + barrier. */
 
-#include "secret_config.h"
+#include "secret_platform.h"
 
 #if defined(SECRET_HAVE_MEMSET_S) && !defined(__STDC_WANT_LIB_EXT1__)
 #define __STDC_WANT_LIB_EXT1__ 1

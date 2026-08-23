@@ -4,7 +4,7 @@
    the platform has no OS entropy source (freestanding/MirageOS), or a
    positive errno value. */
 
-#include "secret_config.h"
+#include "secret_platform.h"
 
 #include <stddef.h>
 #include <errno.h>

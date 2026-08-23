@@ -28,11 +28,16 @@ jobs:
   musl:
     name: alpine (musl) / OCaml 5.4
     runs-on: ubuntu-latest
-    container: ocaml/opam:alpine-ocaml-5.4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: sudo chown -R opam . && opam install . --deps-only --with-test
-      - run: opam exec -- dune build @install @runtest
+      # The ocaml/opam images run as the unprivileged `opam` user, which cannot
+      # write the runner's state files when used as a job container; run the
+      # image explicitly instead.
+      - run: |
+          docker run --rm -v "$PWD:/src" ocaml/opam:alpine-ocaml-5.4 sh -ec '
+            sudo cp -r /src /work && sudo chown -R opam /work && cd /work
+            opam install . --deps-only --with-test -y
+            opam exec -- dune build @install @runtest'
 
   best-effort:
     name: ${{ matrix.name }} (best effort)
@@ -43,6 +48,10 @@ jobs:
       matrix:
         include:
           - { name: windows-mingw, os: windows-latest, ocaml: "5.4" }
+    defaults:
+      run:
+        # PowerShell would treat `@install` as its splatting operator.
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2

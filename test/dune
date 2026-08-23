@@ -89,15 +89,21 @@
 
 (test
  (name test_unix)
- (modules test_unix)
- (enabled_if
-  (<> %{os_type} Win32))
- (libraries secret secret.unix alcotest unix))
+ (modules test_unix test_unix_impl)
+ (libraries
+  secret
+  alcotest
+  unix
+  (select
+   test_unix_impl.ml
+   from
+   (secret.unix -> test_unix_impl.posix.ml)
+   (-> test_unix_impl.skip.ml))))
 
 (executable
  (name leak_scan)
  (modules leak_scan)
- (libraries secret mirage-crypto mirage-crypto-rng mirage-crypto-rng.unix)
+ (libraries secret mirage-crypto)
  (foreign_stubs
   (language c)
   (names leak_scan_stubs)

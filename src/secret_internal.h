@@ -4,7 +4,7 @@
 #ifndef SECRET_INTERNAL_H
 #define SECRET_INTERNAL_H
 
-#include "secret_config.h"
+#include "secret_platform.h"
 
 #include <stddef.h>
 #include <stdint.h>

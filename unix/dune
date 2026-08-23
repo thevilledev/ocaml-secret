@@ -2,6 +2,7 @@
  (name secret_unix)
  (public_name secret.unix)
  (synopsis "Read and write secrets directly through file descriptors")
+ (optional)
  (enabled_if
   (<> %{os_type} Win32))
  (libraries secret unix)
