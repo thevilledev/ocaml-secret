@@ -153,7 +153,9 @@ let test_views () =
   let r = Secret.Unsafe.with_string_view u (fun s -> String.uppercase_ascii s) in
   Alcotest.(check string) "with_string_view" "SCOPED" r;
   Secret.Unsafe.with_bytes_view u (fun b -> Bytes.set b 0 'S');
-  Alcotest.(check string) "with_bytes_view" "Scoped" (Secret.unsafe_to_string u)
+  Alcotest.(check string) "with_bytes_view" "Scoped" (Secret.unsafe_to_string u);
+  Alcotest.(check bool) "scoped views are not retained" false
+    (Secret.status u).Secret.viewed
 
 let test_bigstring_view () =
   let t = s_of "bigstring" in
@@ -174,6 +176,7 @@ let test_bigstring_view () =
 let test_init_random () =
   let t = Secret.init 16 (fun b -> Bytes.fill b 0 16 'i') in
   Alcotest.(check string) "init" (String.make 16 'i') (Secret.unsafe_to_string t);
+  Alcotest.(check bool) "init view is scoped" false (Secret.status t).Secret.viewed;
   (match Secret.init 4 (fun _ -> failwith "fill failed") with
   | _ -> Alcotest.fail "expected failure"
   | exception Failure _ -> ());
@@ -317,13 +320,35 @@ let test_process () =
   | _ -> Alcotest.fail "unexpected report shape"
 
 let test_wipe_all () =
+  Gc.full_major ();
+  Gc.full_major ();
   let a = s_of "a" and b = s_of "bb" in
   Secret.wipe_all ();
   Alcotest.(check bool) "a destroyed" true (Secret.is_destroyed a);
   Alcotest.(check bool) "b destroyed" true (Secret.is_destroyed b);
   (* secrets created afterwards work normally *)
   let c = s_of "c" in
-  Alcotest.(check string) "new secret" "c" (Secret.unsafe_to_string c)
+  Alcotest.(check string) "new secret" "c" (Secret.unsafe_to_string c);
+  (* Storage deferred for concurrency safety must still be released when the
+     destroyed handle is finalized. A pool-sized payload makes that release
+     observable without inspecting freed memory. *)
+  let before = Secret.pool_count () in
+  let weak = Weak.create 1 in
+  let allocate_and_wipe () =
+    let t = Secret.create 60_001 in
+    Weak.set weak 0 (Some t);
+    Secret.wipe_all ()
+  in
+  allocate_and_wipe ();
+  Gc.full_major ();
+  Gc.full_major ();
+  Alcotest.(check bool) "wiped handle finalized" true (Weak.get weak 0 = None);
+  Alcotest.(check bool) "wiped storage released" true (Secret.pool_count () > before)
+
+let test_pool_bounded () =
+  let secrets = Array.init 256 (fun _ -> Secret.create 4096) in
+  Array.iter Secret.destroy secrets;
+  Alcotest.(check bool) "bounded reuse pool" true (Secret.pool_count () <= 128)
 
 let () =
   Alcotest.run "secret"
@@ -350,5 +375,6 @@ let () =
           Alcotest.test_case "capabilities" `Quick test_capabilities;
           Alcotest.test_case "process" `Quick test_process;
           Alcotest.test_case "wipe_all" `Quick test_wipe_all;
+          Alcotest.test_case "bounded pool" `Quick test_pool_bounded;
         ] );
     ]

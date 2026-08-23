@@ -41,11 +41,6 @@ void secret_registry_unlock(void)
   atomic_store_explicit(&registry_lock_word, 0, memory_order_release);
 }
 
-void secret_registry_reset_after_fork(void)
-{
-  atomic_store(&registry_lock_word, 0);
-}
-
 static void registry_init(void)
 {
   if (!registry_initialised) {
@@ -64,6 +59,10 @@ static void registry_link(struct secret_hdr *h)
   registry_head.next->prev = h;
   registry_head.next = h;
   live_count++;
+  /* Allocation happens outside this lock. Reapply the current policy here so
+     a concurrent set_fork_policy cannot leave a just-created mapping with the
+     previous advice. */
+  (void) secret_mem_set_wipeonfork(h, secret_get_fork_policy());
   secret_registry_unlock();
 }
 
@@ -95,9 +94,15 @@ void secret_set_release_hook(secret_release_hook_fn f) { release_hook = f; }
    when [release] is set. */
 static void destroy_payload(struct secret_hdr *h, int release)
 {
-  uintptr_t p = atomic_exchange(&h->ptr, (uintptr_t) 0);
+  uintptr_t p;
   unsigned char *payload;
   uint32_t f;
+  /* Normal destruction serializes the ownership exchange with registry-wide
+     operations that inspect the mapping. wipe_all and atfork already hold
+     the registry lock and request deferred release. */
+  if (release) secret_registry_lock();
+  p = atomic_exchange(&h->ptr, (uintptr_t) 0);
+  if (release) secret_registry_unlock();
   if (p == 0) return;
   payload = (unsigned char *) p;
   f = atomic_load(&h->flags);
@@ -111,15 +116,27 @@ static void destroy_payload(struct secret_hdr *h, int release)
   secret_zeroize(payload, h->bsz - 1);
   atomic_store(&h->flags, f | SF_DESTROYED);
   if (release_hook != NULL) release_hook(payload, h->len, f);
-  if (release) secret_mem_release(h, payload);
+  if (release) {
+    secret_mem_release(h, payload);
+  } else {
+    /* wipe_all permits other domains to finish an in-flight access. Keep the
+       zeroed storage valid until the owning handle can be finalized, but do
+       not lose the pointer needed to release it then. The registry lock
+       serializes this store with finalization; the atfork child is single
+       threaded. */
+    h->retired = payload;
+  }
 }
 
 static void secret_finalize(value v)
 {
   struct secret_hdr *h = Secret_hdr_val(v);
+  unsigned char *retired;
   if (h == NULL) return;
   destroy_payload(h, 1);
   registry_unlink(h);
+  retired = h->retired;
+  if (retired != NULL) secret_mem_release(h, retired);
   free(h);
   Secret_hdr_val(v) = NULL;
 }
@@ -372,6 +389,15 @@ CAMLprim value secret_ml_view(value v)
   return (value) p;
 }
 
+/* A scoped view relies on its OCaml callback not retaining the value. It does
+   not force the allocation to remain mapped forever after destruction. */
+CAMLprim value secret_ml_scoped_view(value v)
+{
+  struct secret_hdr *h = Hdr(v);
+  unsigned char *p = live_payload(h);
+  return p == NULL ? empty_string_value() : (value) p;
+}
+
 CAMLprim value secret_ml_fill_random(value v)
 {
   struct secret_hdr *h = Hdr(v);
@@ -454,19 +480,33 @@ CAMLprim value secret_ml_zeroize_name(value unit)
 /* ---- fork ------------------------------------------------------------------ */
 
 #if defined(SECRET_HAVE_PTHREAD_ATFORK)
+static void atfork_prepare(void)
+{
+  /* Fork only after registry and pool mutations have reached a consistent
+     state. The lock is inherited by the forking thread into the child. */
+  secret_registry_lock();
+}
+
+static void atfork_parent(void)
+{
+  secret_registry_unlock();
+}
+
 static void atfork_child(void)
 {
   struct secret_hdr *h;
-  secret_registry_reset_after_fork();
   secret_bump_fork_generation();
-  if (!secret_get_fork_policy()) return;
-  for (h = registry_head.next; h != &registry_head; h = h->next) {
-    uintptr_t p = atomic_exchange(&h->ptr, (uintptr_t) 0);
-    if (p != 0) {
-      secret_zeroize((void *) p, h->bsz - 1);
-      atomic_fetch_or(&h->flags, SF_DESTROYED | SF_FORK_WIPED);
+  if (secret_get_fork_policy()) {
+    for (h = registry_head.next; h != &registry_head; h = h->next) {
+      uintptr_t p = atomic_exchange(&h->ptr, (uintptr_t) 0);
+      if (p != 0) {
+        secret_zeroize((void *) p, h->bsz - 1);
+        h->retired = (unsigned char *) p;
+        atomic_fetch_or(&h->flags, SF_DESTROYED | SF_FORK_WIPED);
+      }
     }
   }
+  secret_registry_unlock();
 }
 #endif
 
@@ -482,7 +522,7 @@ CAMLprim value secret_ml_init(value unit)
     secret_registry_unlock();
     (void) empty_string_value();
 #if defined(SECRET_HAVE_PTHREAD_ATFORK)
-    (void) pthread_atfork(NULL, NULL, atfork_child);
+    (void) pthread_atfork(atfork_prepare, atfork_parent, atfork_child);
 #endif
   }
   return Val_unit;
@@ -490,7 +530,14 @@ CAMLprim value secret_ml_init(value unit)
 
 CAMLprim value secret_ml_set_fork_policy(value vwipe)
 {
-  secret_set_fork_policy(Bool_val(vwipe));
+  struct secret_hdr *h;
+  int wipe = Bool_val(vwipe);
+  secret_registry_lock();
+  registry_init();
+  secret_set_fork_policy(wipe);
+  for (h = registry_head.next; h != &registry_head; h = h->next)
+    (void) secret_mem_set_wipeonfork(h, wipe);
+  secret_registry_unlock();
   return Val_unit;
 }
 

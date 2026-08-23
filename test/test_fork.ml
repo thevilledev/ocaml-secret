@@ -54,6 +54,20 @@ let test_wipe_in_child () =
   Alcotest.(check string) "parent plain" "plain-secret" (Secret.unsafe_to_string plain);
   Alcotest.(check bool) "parent hard" true (Secret.equal_string hard (String.make 32 'h'))
 
+let test_policy_switch_restores_keep () =
+  if (Secret.capabilities ()).Secret.can_wipe_on_fork then begin
+    Secret.set_fork_policy `Wipe_in_child;
+    let hard = Secret.create ~hardened:true 32 in
+    Secret.fill hard 'k';
+    let advised = (Secret.status hard).Secret.wipe_on_fork in
+    Secret.set_fork_policy `Keep;
+    Alcotest.(check bool) "wipe advice was applied" true advised;
+    Alcotest.(check bool) "wipe advice revoked" false
+      (Secret.status hard).Secret.wipe_on_fork;
+    child_check (fun () -> Secret.equal_string hard (String.make 32 'k'));
+    Secret.destroy hard
+  end
+
 let () =
   if (Secret.capabilities ()).Secret.atfork then
     Alcotest.run "secret-fork"
@@ -62,6 +76,7 @@ let () =
           [
             Alcotest.test_case "Keep" `Quick test_keep;
             Alcotest.test_case "Wipe_in_child" `Quick test_wipe_in_child;
+            Alcotest.test_case "Wipe then Keep" `Quick test_policy_switch_restores_keep;
           ] );
       ]
   else print_endline "no atfork support: skipped"
