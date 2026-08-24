@@ -17,13 +17,16 @@ let () =
   let inner = round_up (16 + bsz) page in
   print_endline "armed";
   (match mode with
-  | "overflow" -> ignore (Helpers.poke t bsz)           (* first byte of trailing guard *)
-  | "underflow" -> ignore (Helpers.poke t (-(inner - bsz) - 1)) (* last byte of leading guard *)
+  | "overflow" -> ignore (Helpers.poke t bsz) (* first byte of trailing guard *)
+  | "underflow" ->
+      ignore (Helpers.poke t (-(inner - bsz) - 1))
+      (* last byte of leading guard *)
   | "canary" ->
       ignore (Helpers.poke t (-16));
       Secret.destroy t
   | "inbounds" ->
-      ignore (Helpers.poke t (bsz - 1));               (* padding byte: harmless *)
+      ignore (Helpers.poke t (bsz - 1));
+      (* padding byte: harmless *)
       Secret.destroy t
   | _ -> exit 99);
   print_endline "survived"

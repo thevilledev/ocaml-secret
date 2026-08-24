@@ -1,5 +1,8 @@
-external read_c : Unix.file_descr -> Secret.t -> int -> int -> int = "secret_unix_read"
-external write_c : Unix.file_descr -> Secret.t -> int -> int -> int = "secret_unix_write"
+external read_c : Unix.file_descr -> Secret.t -> int -> int -> int
+  = "secret_unix_read"
+
+external write_c : Unix.file_descr -> Secret.t -> int -> int -> int
+  = "secret_unix_write"
 
 let decode = function -1 -> raise Secret.Destroyed | r -> r
 let read fd t ~off ~len = decode (read_c fd t off len)
@@ -38,16 +41,16 @@ let read_fd ?hardened fd n =
 let read_file ?hardened ?max path =
   let fd = Unix.openfile path [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 in
   match
-    (let n =
-       match max with
-       | Some m -> m
-       | None -> (
-           let st = Unix.fstat fd in
-           match st.Unix.st_kind with
-           | Unix.S_REG -> st.Unix.st_size
-           | _ -> 1 lsl 20)
-     in
-     read_fd ?hardened fd n)
+    let n =
+      match max with
+      | Some m -> m
+      | None -> (
+          let st = Unix.fstat fd in
+          match st.Unix.st_kind with
+          | Unix.S_REG -> st.Unix.st_size
+          | _ -> 1 lsl 20)
+    in
+    read_fd ?hardened fd n
   with
   | t -> (
       match Unix.close fd with

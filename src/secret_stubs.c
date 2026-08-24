@@ -88,10 +88,8 @@ void secret_set_release_hook(secret_release_hook_fn f) { release_hook = f; }
 
 /* ---- payload lifecycle ------------------------------------------------------ */
 
-/* Zeroize the payload and, if [release], hand the block back to the pool/OS.
-   Idempotent and safe from any thread or domain (ownership is decided by the
-   atomic exchange on [ptr]). Must not be called with the registry lock held
-   when [release] is set. */
+/* Zeroize the payload. Release it immediately when [release] is nonzero;
+   otherwise retain it until finalization for concurrent-reader safety. */
 static void destroy_payload(struct secret_hdr *h, int release)
 {
   uintptr_t p;
@@ -236,15 +234,22 @@ CAMLprim value secret_ml_create(value vlen, value vflags)
   CAMLlocal1(v);
   size_t len = (size_t) Long_val(vlen);
   uint32_t req = (uint32_t) Long_val(vflags);
-  struct secret_hdr *h = (struct secret_hdr *) calloc(1, sizeof *h);
-  size_t mem;
+  struct secret_hdr *h;
+  size_t bsz = secret_block_size(len);
+  size_t mem = sizeof *h + SECRET_PREFIX_BYTES + bsz;
+  size_t page = secret_page_size();
+  if ((req & SF_HARDENED_REQ) && page > 0) {
+    size_t inner = (SECRET_PREFIX_BYTES + bsz + page - 1) / page * page;
+    mem = sizeof *h + page + inner + page;
+  }
+  v = caml_alloc_custom_mem(&secret_custom_ops, sizeof(struct secret_hdr *), mem);
+  Secret_hdr_val(v) = NULL;
+  h = (struct secret_hdr *) calloc(1, sizeof *h);
   if (h == NULL) caml_raise_out_of_memory();
   if (secret_mem_alloc(h, len, req) != 0) {
     free(h);
     caml_raise_out_of_memory();
   }
-  mem = sizeof *h + h->raw_size;
-  v = caml_alloc_custom_mem(&secret_custom_ops, sizeof(struct secret_hdr *), mem);
   Secret_hdr_val(v) = h;
   registry_link(h);
   CAMLreturn(v);

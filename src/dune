@@ -4,8 +4,14 @@
  (synopsis "Secret key material outside the OCaml heap")
  (foreign_stubs
   (language c)
-  (names secret_stubs secret_alloc secret_zero secret_ct secret_random
-   secret_process secret_gc)
+  (names
+   secret_stubs
+   secret_alloc
+   secret_zero
+   secret_ct
+   secret_random
+   secret_process
+   secret_gc)
   (flags
    (:standard
     (:include cflags.sexp))))

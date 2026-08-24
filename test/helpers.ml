@@ -10,7 +10,9 @@ external is_secret : 'a -> bool = "helper_is_secret"
 let run_child exe args =
   let rd, wr = Unix.pipe () in
   let pid =
-    Unix.create_process exe (Array.of_list (exe :: args)) Unix.stdin wr Unix.stderr
+    Unix.create_process exe
+      (Array.of_list (exe :: args))
+      Unix.stdin wr Unix.stderr
   in
   Unix.close wr;
   let ic = Unix.in_channel_of_descr rd in

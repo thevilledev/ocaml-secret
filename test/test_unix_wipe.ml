@@ -4,7 +4,9 @@ let test_partial_read_error_wipes () =
   Helpers.install_hook false;
   let rd, wr = Unix.pipe () in
   Fun.protect
-    ~finally:(fun () -> Unix.close rd; Unix.close wr)
+    ~finally:(fun () ->
+      Unix.close rd;
+      Unix.close wr)
     (fun () ->
       Unix.set_nonblock rd;
       Alcotest.(check int) "seed pipe" 7 (Unix.write_substring wr "partial" 0 7);
@@ -12,11 +14,15 @@ let test_partial_read_error_wipes () =
       | _ -> Alcotest.fail "expected EAGAIN"
       | exception Unix.Unix_error (Unix.EAGAIN, "read", _) -> ());
       Alcotest.(check int) "partial secret destroyed" 1 (Helpers.hook_calls ());
-      Alcotest.(check int) "payload zero before release" 0 (Helpers.hook_nonzero ()))
+      Alcotest.(check int)
+        "payload zero before release" 0 (Helpers.hook_nonzero ()))
 
 let () =
   Alcotest.run "secret-unix-wipe"
     [
       ( "unix",
-        [ Alcotest.test_case "partial read error" `Quick test_partial_read_error_wipes ] );
+        [
+          Alcotest.test_case "partial read error" `Quick
+            test_partial_read_error_wipes;
+        ] );
     ]

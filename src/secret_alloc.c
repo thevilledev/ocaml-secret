@@ -68,8 +68,10 @@ static uint64_t canary_value = 0;
 
 static uint64_t secret_canary_value(void)
 {
+  uint64_t c;
+  secret_registry_lock();
   if (canary_value == 0) {
-    uint64_t c = 0;
+    c = 0;
     if (secret_os_random((unsigned char *) &c, sizeof c) != 0 || c == 0) {
       /* no entropy: derive something address-dependent; the canary is an
          overflow detector, not a security boundary */
@@ -82,7 +84,9 @@ static uint64_t secret_canary_value(void)
     c |= 0x0101010101010101ULL;
     canary_value = c;
   }
-  return canary_value;
+  c = canary_value;
+  secret_registry_unlock();
+  return c;
 }
 
 /* ---- pools ----------------------------------------------------------------- */
@@ -250,6 +254,7 @@ static int tier_b_alloc(struct secret_hdr *h, uint32_t req_flags)
   size_t bsz = h->bsz, inner, map_size;
   unsigned char *payload = NULL, *raw;
   uint32_t f = req_flags & SF_HARDENED_REQ;
+  uint64_t canary;
 
   if (page == 0) return -1;
   tier_b_geometry(bsz, page, &inner, &map_size);
@@ -275,13 +280,14 @@ static int tier_b_alloc(struct secret_hdr *h, uint32_t req_flags)
   }
 
   /* canary just before the OCaml header */
-  *(uint64_t *) (payload - 16) = secret_canary_value();
+  canary = secret_canary_value();
+  memcpy(payload - 16, &canary, sizeof canary);
   f |= SF_CANARY;
   secret_format_block(payload, h->len, bsz);
 
   h->raw = raw;
   h->raw_size = map_size;
-  h->canary = secret_canary_value();
+  h->canary = canary;
   h->lock_errno = 0;
   atomic_store(&h->flags, f);
   tier_b_apply_advice(h, raw + page, inner);

@@ -10,13 +10,33 @@ let worker n () =
     if i mod 5 = 0 then Secret.destroy b
   done
 
+let test_parallel_hardened_creation () =
+  let start = Atomic.make false in
+  let worker () =
+    while not (Atomic.get start) do
+      Domain.cpu_relax ()
+    done;
+    for _ = 1 to 100 do
+      let t = Secret.create ~hardened:true 32 in
+      Secret.destroy t
+    done
+  in
+  let ds = List.init 4 (fun _ -> Domain.spawn worker) in
+  Atomic.set start true;
+  List.iter Domain.join ds
+
 let test_parallel_workers () =
   let ds = List.init 4 (fun _ -> Domain.spawn (worker 20_000)) in
   List.iter Domain.join ds;
   Gc.full_major ()
 
 let test_cross_domain_finalization () =
-  let d = Domain.spawn (fun () -> for _ = 1 to 10_000 do ignore (Secret.create 64) done) in
+  let d =
+    Domain.spawn (fun () ->
+        for _ = 1 to 10_000 do
+          ignore (Secret.create 64)
+        done)
+  in
   Domain.join d;
   Gc.full_major ();
   Gc.full_major ();
@@ -38,9 +58,11 @@ let test_wipe_all_under_allocation () =
        followed by zeros; anything else is corruption *)
     let n = String.length s in
     n = 6
-    && (let rec ok i = i >= n || (if s.[i] = "racing".[i] then ok (i + 1) else zeros i)
-        and zeros i = i >= n || (s.[i] = '\000' && zeros (i + 1)) in
-        ok 0)
+    &&
+    let rec ok i =
+      i >= n || if s.[i] = "racing".[i] then ok (i + 1) else zeros i
+    and zeros i = i >= n || (s.[i] = '\000' && zeros (i + 1)) in
+    ok 0
   in
   let allocator () =
     while not (Atomic.get stop) do
@@ -54,7 +76,9 @@ let test_wipe_all_under_allocation () =
     done
   in
   let ds = List.init 3 (fun _ -> Domain.spawn allocator) in
-  for _ = 1 to 50 do Secret.wipe_all () done;
+  for _ = 1 to 50 do
+    Secret.wipe_all ()
+  done;
   Atomic.set stop true;
   List.iter Domain.join ds;
   Alcotest.(check int) "no corruption" 0 (Atomic.get errors)
@@ -64,9 +88,14 @@ let () =
     [
       ( "domains",
         [
+          Alcotest.test_case "parallel hardened creation" `Quick
+            test_parallel_hardened_creation;
           Alcotest.test_case "parallel workers" `Quick test_parallel_workers;
-          Alcotest.test_case "cross-domain finalization" `Quick test_cross_domain_finalization;
-          Alcotest.test_case "concurrent double destroy" `Quick test_concurrent_double_destroy;
-          Alcotest.test_case "wipe_all under allocation" `Quick test_wipe_all_under_allocation;
+          Alcotest.test_case "cross-domain finalization" `Quick
+            test_cross_domain_finalization;
+          Alcotest.test_case "concurrent double destroy" `Quick
+            test_concurrent_double_destroy;
+          Alcotest.test_case "wipe_all under allocation" `Quick
+            test_wipe_all_under_allocation;
         ] );
     ]
