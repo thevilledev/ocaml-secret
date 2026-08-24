@@ -18,18 +18,21 @@ external fill_c : t -> char -> int = "secret_ml_fill" [@@noalloc]
 external zero_c : t -> int = "secret_ml_zero" [@@noalloc]
 
 external blit_c : t -> int -> t -> int -> int -> int = "secret_ml_blit"
-  [@@noalloc]
+[@@noalloc]
 
 external blit_from_string_c : string -> int -> t -> int -> int -> int
   = "secret_ml_blit_from_string"
-  [@@noalloc]
+[@@noalloc]
 
 external blit_to_bytes_c : t -> int -> bytes -> int -> int -> int
   = "secret_ml_blit_to_bytes"
-  [@@noalloc]
+[@@noalloc]
 
 external equal_c : t -> t -> int = "secret_ml_equal" [@@noalloc]
-external equal_string_c : t -> string -> int = "secret_ml_equal_string" [@@noalloc]
+
+external equal_string_c : t -> string -> int = "secret_ml_equal_string"
+[@@noalloc]
+
 external view_c : t -> string = "secret_ml_view" [@@noalloc]
 external scoped_view_c : t -> string = "secret_ml_scoped_view" [@@noalloc]
 external fill_random_c : t -> int = "secret_ml_fill_random" [@@noalloc]
@@ -42,18 +45,25 @@ external pool_count_c : unit -> int = "secret_ml_pool_count" [@@noalloc]
 external capabilities_c : unit -> int = "secret_ml_capabilities" [@@noalloc]
 external page_size_c : unit -> int = "secret_ml_page_size" [@@noalloc]
 external zeroize_name_c : unit -> string = "secret_ml_zeroize_name"
-external set_fork_policy_c : bool -> unit = "secret_ml_set_fork_policy" [@@noalloc]
+
+external set_fork_policy_c : bool -> unit = "secret_ml_set_fork_policy"
+[@@noalloc]
+
 external after_fork_c : unit -> unit = "secret_ml_after_fork" [@@noalloc]
 external scrub_minor_heap_c : unit -> unit = "secret_ml_scrub_minor_heap"
-external process_feature_c : int -> int = "secret_ml_process_feature" [@@noalloc]
+
+external process_feature_c : int -> int = "secret_ml_process_feature"
+[@@noalloc]
+
 external scrub_env_c : string -> int = "secret_ml_scrub_env" [@@noalloc]
 
 type bigstring =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
 external bigstring_view_c : t -> bigstring = "secret_ml_bigstring_view"
+
 external revoke_bigstring_c : bigstring -> unit = "secret_ml_revoke_bigstring"
-  [@@noalloc]
+[@@noalloc]
 
 (* ---- flag bits (must match secret_internal.h) ---------------------------- *)
 
@@ -70,14 +80,12 @@ let sf_viewed = 1 lsl 9
 let sf_lock_unsupported = 1 lsl 10
 let sf_nodump_unsupported = 1 lsl 11
 let sf_lock_lost = 1 lsl 12
-
 let cap_hardened_tier = 1 lsl 0
 let cap_can_lock = 1 lsl 1
 let cap_can_nodump = 1 lsl 2
 let cap_can_wipeonfork = 1 lsl 3
 let cap_os_random = 1 lsl 4
 let cap_atfork = 1 lsl 5
-
 let has f bit = f land bit <> 0
 
 (* ---- helpers -------------------------------------------------------------- *)
@@ -178,17 +186,22 @@ let random ?hardened n =
           let b = Scratch.create n in
           match
             gen b;
-            check_rc "Secret.random" (blit_from_string_c (Bytes.unsafe_to_string b) 0 t 0 n)
+            check_rc "Secret.random"
+              (blit_from_string_c (Bytes.unsafe_to_string b) 0 t 0 n)
           with
           | () -> Scratch.wipe b
           | exception e ->
               Scratch.wipe b;
               destroy t;
               raise e))
-  | -2 -> raise Destroyed
+  | -2 ->
+      destroy t;
+      raise Destroyed
   | errno ->
       destroy t;
-      raise (Sys_error (Printf.sprintf "Secret.random: OS entropy failed (errno %d)" errno)));
+      raise
+        (Sys_error
+           (Printf.sprintf "Secret.random: OS entropy failed (errno %d)" errno)));
   t
 
 let of_string ?hardened s =
@@ -201,10 +214,12 @@ let of_bytes ?hardened ~wipe_source b =
   let copy () =
     let n = Bytes.length b in
     let t = create ?hardened n in
-    check_rc "Secret.of_bytes" (blit_from_string_c (Bytes.unsafe_to_string b) 0 t 0 n);
+    check_rc "Secret.of_bytes"
+      (blit_from_string_c (Bytes.unsafe_to_string b) 0 t 0 n);
     t
   in
-  if wipe_source then Fun.protect ~finally:(fun () -> wipe_bytes_c b) copy else copy ()
+  if wipe_source then Fun.protect ~finally:(fun () -> wipe_bytes_c b) copy
+  else copy ()
 
 let with_secret ?hardened n f =
   let t = create ?hardened n in
@@ -256,7 +271,8 @@ let status t =
   let lock : lock =
     if not requested then `Not_requested
     else if not page_backed then
-      if has f sf_lock_unsupported then `Unsupported else `Failed (lock_errno_c t)
+      if has f sf_lock_unsupported then `Unsupported
+      else `Failed (lock_errno_c t)
     else if has f sf_lock_unsupported then `Unsupported
     else if has f sf_lock_lost then `Lost_on_fork
     else if has f sf_locked then `Locked
@@ -312,7 +328,8 @@ let blit ~src ~src_off ~dst ~dst_off ~len =
   check_rc "Secret.blit" (blit_c src src_off dst dst_off len)
 
 let blit_from_string s ~src_off t ~dst_off ~len =
-  check_rc "Secret.blit_from_string" (blit_from_string_c s src_off t dst_off len)
+  check_rc "Secret.blit_from_string"
+    (blit_from_string_c s src_off t dst_off len)
 
 let blit_from_bytes b ~src_off t ~dst_off ~len =
   blit_from_string (Bytes.unsafe_to_string b) ~src_off t ~dst_off ~len
@@ -325,11 +342,15 @@ let hardened_of t =
   has f sf_hardened_req
 
 let sub ?hardened t ~off ~len =
+  if is_destroyed_c t then raise Destroyed;
   if off < 0 || len < 0 || off > length_c t - len then invalid_arg "Secret.sub";
   let hardened = match hardened with Some h -> h | None -> hardened_of t in
   let r = create ~hardened len in
-  check_rc "Secret.sub" (blit_c t off r 0 len);
-  r
+  match check_rc "Secret.sub" (blit_c t off r 0 len) with
+  | () -> r
+  | exception e ->
+      destroy r;
+      raise e
 
 let copy ?hardened t = sub ?hardened t ~off:0 ~len:(length_c t)
 
@@ -386,7 +407,10 @@ end
 let wipe_all () = wipe_all_c ()
 let live_count () = live_count_c ()
 let pool_count () = pool_count_c ()
-let set_fork_policy p = set_fork_policy_c (match p with `Keep -> false | `Wipe_in_child -> true)
+
+let set_fork_policy p =
+  set_fork_policy_c (match p with `Keep -> false | `Wipe_in_child -> true)
+
 let after_fork () = after_fork_c ()
 
 let () =

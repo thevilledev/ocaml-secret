@@ -1,6 +1,8 @@
 let with_tmp f =
   let path = Filename.temp_file "secret" ".key" in
-  Fun.protect ~finally:(fun () -> try Sys.remove path with _ -> ()) (fun () -> f path)
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () -> f path)
 
 let test_read_write () =
   with_tmp (fun path ->
@@ -17,12 +19,15 @@ let test_read_write () =
       let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
       let u = Secret.create 10 in
       Secret_unix.read_exactly fd u ~off:0 ~len:10;
-      Alcotest.(check string) "read_exactly" "the-key-ma" (Secret.unsafe_to_string u);
+      Alcotest.(check string)
+        "read_exactly" "the-key-ma"
+        (Secret.unsafe_to_string u);
       Alcotest.check_raises "eof" End_of_file (fun () ->
           Secret_unix.read_exactly fd (Secret.create 100) ~off:0 ~len:100);
       Unix.close fd;
-      Alcotest.check_raises "bounds" (Invalid_argument "Secret_unix.read: out of bounds")
-        (fun () -> ignore (Secret_unix.read Unix.stdin u ~off:5 ~len:10));
+      Alcotest.check_raises "bounds"
+        (Invalid_argument "Secret_unix.read: out of bounds") (fun () ->
+          ignore (Secret_unix.read Unix.stdin u ~off:5 ~len:10));
       Secret.destroy u;
       Alcotest.check_raises "destroyed" Secret.Destroyed (fun () ->
           ignore (Secret_unix.read Unix.stdin u ~off:0 ~len:1)))
@@ -41,5 +46,10 @@ let test_errors () =
 
 let run () =
   Alcotest.run "secret-unix"
-    [ ("unix", [ Alcotest.test_case "read/write" `Quick test_read_write;
-                 Alcotest.test_case "errors" `Quick test_errors ]) ]
+    [
+      ( "unix",
+        [
+          Alcotest.test_case "read/write" `Quick test_read_write;
+          Alcotest.test_case "errors" `Quick test_errors;
+        ] );
+    ]

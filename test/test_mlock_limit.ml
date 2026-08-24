@@ -9,7 +9,9 @@ let () =
   (match st.Secret.lock with
   | `Failed e -> Printf.printf "lock failed as expected (errno %d)\n" e
   | `Unsupported -> print_endline "lock unsupported on this platform"
-  | `Not_requested -> if caps.Secret.hardened_tier then failwith "lock should have been requested"
+  | `Not_requested ->
+      if caps.Secret.hardened_tier then
+        failwith "lock should have been requested"
   | `Locked -> failwith "mlock succeeded despite ulimit -l 0"
   | `Lost_on_fork -> failwith "unexpected Lost_on_fork");
   Secret.destroy t;

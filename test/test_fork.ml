@@ -38,8 +38,12 @@ let test_keep () =
       in
       ok1 && ok2 && ok3 && ok4);
   (* parent unaffected *)
-  Alcotest.(check string) "parent plain" "plain-secret" (Secret.unsafe_to_string plain);
-  Alcotest.(check bool) "parent hard" true (Secret.equal_string hard (String.make 32 'h'))
+  Alcotest.(check string)
+    "parent plain" "plain-secret"
+    (Secret.unsafe_to_string plain);
+  Alcotest.(check bool)
+    "parent hard" true
+    (Secret.equal_string hard (String.make 32 'h'))
 
 let test_wipe_in_child () =
   Secret.set_fork_policy `Wipe_in_child;
@@ -48,11 +52,19 @@ let test_wipe_in_child () =
   Secret.fill hard 'h';
   child_check (fun () ->
       let d1 = Secret.is_destroyed plain and d2 = Secret.is_destroyed hard in
-      let raises = match Secret.unsafe_to_string plain with _ -> false | exception Secret.Destroyed -> true in
+      let raises =
+        match Secret.unsafe_to_string plain with
+        | _ -> false
+        | exception Secret.Destroyed -> true
+      in
       d1 && d2 && raises);
   Secret.set_fork_policy `Keep;
-  Alcotest.(check string) "parent plain" "plain-secret" (Secret.unsafe_to_string plain);
-  Alcotest.(check bool) "parent hard" true (Secret.equal_string hard (String.make 32 'h'))
+  Alcotest.(check string)
+    "parent plain" "plain-secret"
+    (Secret.unsafe_to_string plain);
+  Alcotest.(check bool)
+    "parent hard" true
+    (Secret.equal_string hard (String.make 32 'h'))
 
 let test_policy_switch_restores_keep () =
   if (Secret.capabilities ()).Secret.can_wipe_on_fork then begin
@@ -62,8 +74,8 @@ let test_policy_switch_restores_keep () =
     let advised = (Secret.status hard).Secret.wipe_on_fork in
     Secret.set_fork_policy `Keep;
     Alcotest.(check bool) "wipe advice was applied" true advised;
-    Alcotest.(check bool) "wipe advice revoked" false
-      (Secret.status hard).Secret.wipe_on_fork;
+    Alcotest.(check bool)
+      "wipe advice revoked" false (Secret.status hard).Secret.wipe_on_fork;
     child_check (fun () -> Secret.equal_string hard (String.make 32 'k'));
     Secret.destroy hard
   end
@@ -76,7 +88,8 @@ let () =
           [
             Alcotest.test_case "Keep" `Quick test_keep;
             Alcotest.test_case "Wipe_in_child" `Quick test_wipe_in_child;
-            Alcotest.test_case "Wipe then Keep" `Quick test_policy_switch_restores_keep;
+            Alcotest.test_case "Wipe then Keep" `Quick
+              test_policy_switch_restores_keep;
           ] );
       ]
   else print_endline "no atfork support: skipped"

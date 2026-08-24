@@ -27,9 +27,13 @@ let () =
     [
       ( "guard",
         [
-          Alcotest.test_case "overflow hits guard page" `Quick (run "overflow" ~expect_death:true);
-          Alcotest.test_case "underflow hits guard page" `Quick (run "underflow" ~expect_death:true);
-          Alcotest.test_case "canary corruption aborts" `Quick (run "canary" ~expect_death:true);
-          Alcotest.test_case "in-bounds write survives" `Quick (run "inbounds" ~expect_death:false);
+          Alcotest.test_case "overflow hits guard page" `Quick
+            (run "overflow" ~expect_death:true);
+          Alcotest.test_case "underflow hits guard page" `Quick
+            (run "underflow" ~expect_death:true);
+          Alcotest.test_case "canary corruption aborts" `Quick
+            (run "canary" ~expect_death:true);
+          Alcotest.test_case "in-bounds write survives" `Quick
+            (run "inbounds" ~expect_death:false);
         ] );
     ]

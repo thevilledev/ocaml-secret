@@ -89,8 +89,9 @@ CAMLprim value secret_ml_scrub_env(value vname)
   char **e;
   if (environ == NULL || nlen == 0) return Val_long(0);
   for (e = environ; *e != NULL; e++) {
-    if (strncmp(*e, name, nlen) == 0 && (*e)[nlen] == '=') {
-      char *val = *e + nlen + 1;
+    char *eq = strchr(*e, '=');
+    if (eq != NULL && (size_t) (eq - *e) == nlen && memcmp(*e, name, nlen) == 0) {
+      char *val = eq + 1;
       secret_zeroize(val, strlen(val));
       found = 1;
     }
