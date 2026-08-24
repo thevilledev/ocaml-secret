@@ -10,7 +10,7 @@
 (test
  (name test_secret)
  (modules test_secret)
- (libraries secret alcotest unix))
+ (libraries secret helpers alcotest unix))
 
 (test
  (name test_gc)

@@ -64,13 +64,26 @@ size_t secret_page_size(void)
 
 /* ---- canary ---------------------------------------------------------------- */
 
-static _Atomic uint64_t canary_value = 0;
+/* The canary is written once and then only read. [canary_ready] guards it: a
+   release store there publishes the value that the acquire load below pairs
+   with, so readers that see the flag also see the value. Deliberately not an
+   _Atomic uint64_t -- that would be the library's only 64-bit atomic, and a
+   32-bit target whose compiler cannot inline an 8-byte CAS emits a call into
+   libatomic, which nothing here links. */
+static _Atomic uint32_t canary_ready = 0;
+static uint64_t canary_value = 0;
 
 static uint64_t secret_canary_value(void)
 {
-  uint64_t c = atomic_load_explicit(&canary_value, memory_order_acquire);
-  uint64_t expected;
-  if (c != 0) return c;
+  uint64_t c;
+
+  if (atomic_load_explicit(&canary_ready, memory_order_acquire))
+    return canary_value;
+
+  /* Collect entropy without the lock held. getrandom blocks until the kernel
+     CRNG is seeded, and this runs on the first hardened allocation, which can
+     be early in boot; under the lock every other create/destroy/wipe_all in
+     the process would spin behind that syscall. */
   c = 0;
   if (secret_os_random((unsigned char *) &c, sizeof c) != 0 || c == 0) {
     /* no entropy: derive something address-dependent; the canary is an
@@ -82,19 +95,42 @@ static uint64_t secret_canary_value(void)
   /* make sure the canary never contains a NUL byte so C string functions
      cannot be used to read past it silently; cheap and conventional */
   c |= 0x0101010101010101ULL;
-  expected = 0;
-  if (atomic_compare_exchange_strong_explicit(&canary_value, &expected, c,
-                                              memory_order_release,
-                                              memory_order_acquire))
-    return c;
-  return expected;
+
+  /* Racing callers each read entropy; the first to publish wins and everyone
+     returns that one value, so all live canaries agree. */
+  secret_registry_lock();
+  if (!atomic_load_explicit(&canary_ready, memory_order_relaxed)) {
+    canary_value = c;
+    atomic_store_explicit(&canary_ready, 1, memory_order_release);
+  }
+  c = canary_value;
+  secret_registry_unlock();
+  return c;
 }
 
 /* ---- pools ----------------------------------------------------------------- */
 
-/* Index by word count so 32-bit size classes (multiples of 4) do not alias. */
+/* Index by word count so 32-bit size classes (multiples of 4) do not alias.
+   One slot per class: the four tables below hold POOL_SLOTS words each, which
+   is ~256 KiB of BSS on either word size. A 32-bit build gets twice as many
+   slots as the aliasing index gave it, for the same total. */
 #define POOL_WORD sizeof(value)
 #define POOL_SLOTS (SECRET_POOL_MAX_BSZ / POOL_WORD + 1)
+
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+/* The slot index must be injective over block sizes, which are multiples of
+   sizeof(value). Dividing by a literal 8 satisfies that only on 64-bit: on
+   32-bit it maps bsz 8 and bsz 12 both to slot 1, and recycling the 8-byte
+   block for a 12-byte secret overflows it. */
+_Static_assert((2 * sizeof(value)) / POOL_WORD != (3 * sizeof(value)) / POOL_WORD,
+               "pool slot index aliases adjacent size classes");
+#endif
+
+/* Not static and not installed: the test suite reads the mapping back to check
+   that no two block sizes share a slot. */
+size_t secret_pool_slot(size_t bsz) { return bsz / POOL_WORD; }
+size_t secret_block_size_of(size_t len) { return secret_block_size(len); }
+
 static unsigned char *pool_a[POOL_SLOTS];
 static unsigned char *pool_b[POOL_SLOTS];
 static size_t pool_a_slot_counts[POOL_SLOTS];
@@ -106,7 +142,7 @@ static size_t pool_a_count = 0, pool_b_count = 0;
 static unsigned char *pool_pop(unsigned char **pool, size_t *slot_counts,
                                size_t *count, size_t bsz)
 {
-  size_t idx = bsz / POOL_WORD;
+  size_t idx = secret_pool_slot(bsz);
   unsigned char *p = NULL;
   if (idx < POOL_SLOTS) {
     secret_registry_lock();
@@ -125,7 +161,7 @@ static unsigned char *pool_pop(unsigned char **pool, size_t *slot_counts,
 static int pool_push(unsigned char **pool, size_t *slot_counts, size_t *count,
                      size_t bsz, unsigned char *payload)
 {
-  size_t idx = bsz / POOL_WORD;
+  size_t idx = secret_pool_slot(bsz);
   int inserted = 0;
   /* caller guarantees idx < POOL_SLOTS */
   secret_registry_lock();

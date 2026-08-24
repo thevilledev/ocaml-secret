@@ -324,9 +324,38 @@ let test_hardened () =
   Secret.destroy u
 
 let test_pool_size_classes () =
-  (* On 32-bit, block sizes are multiples of 4. Indexing the reuse pool by
-     bsz/8 aliases 4-byte and 12-byte blocks; filling the larger secret would
-     then overflow the smaller allocation. *)
+  (* Released payload blocks are pooled per size class and handed back to the
+     next secret in that class, so the slot index must be injective over block
+     sizes: two lengths may share a slot only if they share a block size.
+
+     Indexing by bsz/8 breaks that on 32-bit, where block sizes are multiples
+     of 4 -- bsz 8 and bsz 12 both land in slot 1, and reusing the 8-byte
+     block for a 12-byte secret writes past it. The aliasing is invisible to a
+     create/destroy/create sequence on a 64-bit host, where no two block sizes
+     collide either way, so check the mapping itself rather than exercising
+     it. *)
+  let word = Sys.word_size / 8 in
+  let by_slot = Hashtbl.create 64 in
+  for len = 0 to 1024 do
+    let bsz = Helpers.block_size len in
+    let slot = Helpers.pool_slot len in
+    Alcotest.(check bool)
+      (Printf.sprintf "block size %d holds length %d" bsz len)
+      true (bsz > len);
+    Alcotest.(check int)
+      (Printf.sprintf "block size %d is a whole number of words" bsz)
+      0 (bsz mod word);
+    Alcotest.(check int)
+      (Printf.sprintf "slot for block size %d is indexed by word" bsz)
+      (bsz / word) slot;
+    match Hashtbl.find_opt by_slot slot with
+    | Some other when other <> bsz ->
+        Alcotest.failf "pool slot %d shared by block sizes %d and %d" slot other
+          bsz
+    | _ -> Hashtbl.replace by_slot slot bsz
+  done;
+  (* And the path that would trip over it: a block released by one size class
+     must never come back to a different one. *)
   let t4 = Secret.create 4 in
   Secret.fill t4 'A';
   Secret.destroy t4;
