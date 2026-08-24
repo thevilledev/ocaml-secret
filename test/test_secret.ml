@@ -323,6 +323,24 @@ let test_hardened () =
   Secret.destroy t2;
   Secret.destroy u
 
+let test_pool_size_classes () =
+  (* On 32-bit, block sizes are multiples of 4. Indexing the reuse pool by
+     bsz/8 aliases 4-byte and 12-byte blocks; filling the larger secret would
+     then overflow the smaller allocation. *)
+  let t4 = Secret.create 4 in
+  Secret.fill t4 'A';
+  Secret.destroy t4;
+  let t8 = Secret.create 8 in
+  Secret.fill t8 'B';
+  Alcotest.(check string) "8-byte" "BBBBBBBB" (Secret.unsafe_to_string t8);
+  let t9 = Secret.create 9 in
+  Secret.fill t9 'C';
+  Alcotest.(check string)
+    "9-byte" (String.make 9 'C')
+    (Secret.unsafe_to_string t9);
+  Secret.destroy t8;
+  Secret.destroy t9
+
 let test_pool_reuse () =
   let before = Secret.pool_count () in
   let t = Secret.create 100 in
@@ -461,6 +479,7 @@ let () =
             test_status_default_tier;
           Alcotest.test_case "hardened" `Quick test_hardened;
           Alcotest.test_case "pool reuse" `Quick test_pool_reuse;
+          Alcotest.test_case "pool size classes" `Quick test_pool_size_classes;
           Alcotest.test_case "scratch" `Quick test_scratch;
           Alcotest.test_case "capabilities" `Quick test_capabilities;
           Alcotest.test_case "process" `Quick test_process;

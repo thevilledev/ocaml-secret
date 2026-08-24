@@ -148,8 +148,9 @@ static inline header_t secret_string_header(mlsize_t wosize)
 }
 
 /* Block size in bytes for a logical length: exactly the size
-   caml_alloc_string would use, so that a view is indistinguishable from an
-   ordinary string (caml_string_equal compares wosize first). */
+   caml_alloc_string would use (a multiple of sizeof(value)), so that a view
+   is indistinguishable from an ordinary string (caml_string_equal compares
+   wosize first). */
 static inline size_t secret_block_size(size_t len)
 {
   size_t wosize = (len + sizeof(value)) / sizeof(value);

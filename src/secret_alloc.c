@@ -64,34 +64,37 @@ size_t secret_page_size(void)
 
 /* ---- canary ---------------------------------------------------------------- */
 
-static uint64_t canary_value = 0;
+static _Atomic uint64_t canary_value = 0;
 
 static uint64_t secret_canary_value(void)
 {
-  uint64_t c;
-  secret_registry_lock();
-  if (canary_value == 0) {
-    c = 0;
-    if (secret_os_random((unsigned char *) &c, sizeof c) != 0 || c == 0) {
-      /* no entropy: derive something address-dependent; the canary is an
-         overflow detector, not a security boundary */
-      uintptr_t a = (uintptr_t) &canary_value;
-      c = 0x9e3779b97f4a7c15ULL ^ ((uint64_t) a * 0xbf58476d1ce4e5b9ULL);
-      if (c == 0) c = 1;
-    }
-    /* make sure the canary never contains a NUL byte so C string functions
-       cannot be used to read past it silently; cheap and conventional */
-    c |= 0x0101010101010101ULL;
-    canary_value = c;
+  uint64_t c = atomic_load_explicit(&canary_value, memory_order_acquire);
+  uint64_t expected;
+  if (c != 0) return c;
+  c = 0;
+  if (secret_os_random((unsigned char *) &c, sizeof c) != 0 || c == 0) {
+    /* no entropy: derive something address-dependent; the canary is an
+       overflow detector, not a security boundary */
+    uintptr_t a = (uintptr_t) &canary_value;
+    c = 0x9e3779b97f4a7c15ULL ^ ((uint64_t) a * 0xbf58476d1ce4e5b9ULL);
+    if (c == 0) c = 1;
   }
-  c = canary_value;
-  secret_registry_unlock();
-  return c;
+  /* make sure the canary never contains a NUL byte so C string functions
+     cannot be used to read past it silently; cheap and conventional */
+  c |= 0x0101010101010101ULL;
+  expected = 0;
+  if (atomic_compare_exchange_strong_explicit(&canary_value, &expected, c,
+                                              memory_order_release,
+                                              memory_order_acquire))
+    return c;
+  return expected;
 }
 
 /* ---- pools ----------------------------------------------------------------- */
 
-#define POOL_SLOTS (SECRET_POOL_MAX_BSZ / 8 + 1)
+/* Index by word count so 32-bit size classes (multiples of 4) do not alias. */
+#define POOL_WORD sizeof(value)
+#define POOL_SLOTS (SECRET_POOL_MAX_BSZ / POOL_WORD + 1)
 static unsigned char *pool_a[POOL_SLOTS];
 static unsigned char *pool_b[POOL_SLOTS];
 static size_t pool_a_slot_counts[POOL_SLOTS];
@@ -103,7 +106,7 @@ static size_t pool_a_count = 0, pool_b_count = 0;
 static unsigned char *pool_pop(unsigned char **pool, size_t *slot_counts,
                                size_t *count, size_t bsz)
 {
-  size_t idx = bsz / 8;
+  size_t idx = bsz / POOL_WORD;
   unsigned char *p = NULL;
   if (idx < POOL_SLOTS) {
     secret_registry_lock();
@@ -122,7 +125,7 @@ static unsigned char *pool_pop(unsigned char **pool, size_t *slot_counts,
 static int pool_push(unsigned char **pool, size_t *slot_counts, size_t *count,
                      size_t bsz, unsigned char *payload)
 {
-  size_t idx = bsz / 8;
+  size_t idx = bsz / POOL_WORD;
   int inserted = 0;
   /* caller guarantees idx < POOL_SLOTS */
   secret_registry_lock();
@@ -359,7 +362,7 @@ void secret_mem_unlock(struct secret_hdr *h)
     size_t page = secret_page_size(), inner, map_size;
     tier_b_geometry(h->bsz, page, &inner, &map_size);
     munlock(h->raw + page, inner);
-    atomic_store(&h->flags, f & ~SF_LOCKED);
+    atomic_fetch_and(&h->flags, ~SF_LOCKED);
   }
 #else
   (void) h;
@@ -375,10 +378,10 @@ int secret_mem_relock(struct secret_hdr *h)
   tier_b_geometry(h->bsz, page, &inner, &map_size);
   if (mlock(h->raw + page, inner) == 0) {
     h->lock_errno = 0;
-    atomic_store(&h->flags, f | SF_LOCKED);
+    atomic_fetch_or(&h->flags, SF_LOCKED);
   } else {
     h->lock_errno = errno;
-    atomic_store(&h->flags, f & ~SF_LOCKED);
+    atomic_fetch_and(&h->flags, ~SF_LOCKED);
   }
   h->fork_gen = secret_fork_generation_now();
   return 0;

@@ -13,6 +13,7 @@
 #include <caml/custom.h>
 #include <caml/bigarray.h>
 #include <caml/address_class.h>
+#include <caml/signals.h>
 
 #if defined(SECRET_HAVE_PTHREAD_ATFORK)
 #include <pthread.h>
@@ -95,13 +96,15 @@ static void destroy_payload(struct secret_hdr *h, int release)
   uintptr_t p;
   unsigned char *payload;
   uint32_t f;
-  /* Normal destruction serializes the ownership exchange with registry-wide
-     operations that inspect the mapping. wipe_all and atfork already hold
-     the registry lock and request deferred release. */
+  /* Hold the registry lock across the wipe so a concurrent fork cannot copy
+     unswept pages after ptr is cleared. wipe_all and atfork already hold the
+     lock and request deferred release. */
   if (release) secret_registry_lock();
   p = atomic_exchange(&h->ptr, (uintptr_t) 0);
-  if (release) secret_registry_unlock();
-  if (p == 0) return;
+  if (p == 0) {
+    if (release) secret_registry_unlock();
+    return;
+  }
   payload = (unsigned char *) p;
   f = atomic_load(&h->flags);
   if (f & SF_CANARY) {
@@ -112,7 +115,8 @@ static void destroy_payload(struct secret_hdr *h, int release)
   }
   /* everything but the padding byte, so a stale view keeps a valid length */
   secret_zeroize(payload, h->bsz - 1);
-  atomic_store(&h->flags, f | SF_DESTROYED);
+  atomic_fetch_or(&h->flags, SF_DESTROYED);
+  if (release) secret_registry_unlock();
   if (release_hook != NULL) release_hook(payload, h->len, f);
   if (release) {
     secret_mem_release(h, payload);
@@ -210,12 +214,16 @@ int secret_borrow_string_or_secret(value v, const unsigned char **p, size_t *len
 
 static struct {
   header_t hd;
-  unsigned char data[8];
-} empty_block = { 0, { 0, 0, 0, 0, 0, 0, 0, 7 } };
+  unsigned char data[sizeof(value)];
+} empty_block;
 
 static value empty_string_value(void)
 {
-  if (empty_block.hd == 0) empty_block.hd = secret_string_header(1);
+  if (empty_block.hd == 0) {
+    memset(empty_block.data, 0, sizeof empty_block.data);
+    empty_block.data[sizeof(value) - 1] = (unsigned char) (sizeof(value) - 1);
+    empty_block.hd = secret_string_header(1);
+  }
   return (value) empty_block.data;
 }
 
@@ -388,10 +396,12 @@ CAMLprim value secret_ml_equal_string(value va, value vs)
 CAMLprim value secret_ml_view(value v)
 {
   struct secret_hdr *h = Hdr(v);
-  unsigned char *p = live_payload(h);
-  if (p == NULL) return empty_string_value();
+  unsigned char *p;
+  if (h == NULL) return empty_string_value();
+  /* Mark viewed before reading ptr so a racing destroy keeps the mapping. */
   atomic_fetch_or(&h->flags, SF_VIEWED);
-  return (value) p;
+  p = live_payload(h);
+  return p == NULL ? empty_string_value() : (value) p;
 }
 
 /* A scoped view relies on its OCaml callback not retaining the value. It does
@@ -405,10 +415,17 @@ CAMLprim value secret_ml_scoped_view(value v)
 
 CAMLprim value secret_ml_fill_random(value v)
 {
+  CAMLparam1(v);
   struct secret_hdr *h = Hdr(v);
   unsigned char *p = live_payload(h);
-  if (p == NULL) return Val_long(-2);
-  return Val_long(secret_os_random(p, h->len));
+  size_t n;
+  int r;
+  if (p == NULL) CAMLreturn(Val_long(-2));
+  n = h->len;
+  caml_enter_blocking_section();
+  r = secret_os_random(p, n);
+  caml_leave_blocking_section();
+  CAMLreturn(Val_long(r));
 }
 
 /* A fresh, zero-filled bytes allocated directly in the major heap. */
