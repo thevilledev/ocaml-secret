@@ -35,7 +35,7 @@ external equal_string_c : t -> string -> int = "secret_ml_equal_string"
 
 external view_c : t -> string = "secret_ml_view" [@@noalloc]
 external scoped_view_c : t -> string = "secret_ml_scoped_view" [@@noalloc]
-external fill_random_c : t -> int = "secret_ml_fill_random" [@@noalloc]
+external fill_random_c : t -> int = "secret_ml_fill_random"
 external alloc_major_bytes_c : int -> bytes = "secret_ml_alloc_major_bytes"
 external wipe_bytes_c : bytes -> unit = "secret_ml_wipe_bytes" [@@noalloc]
 external is_young_c : bytes -> bool = "secret_ml_is_young" [@@noalloc]

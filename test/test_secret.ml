@@ -323,6 +323,53 @@ let test_hardened () =
   Secret.destroy t2;
   Secret.destroy u
 
+let test_pool_size_classes () =
+  (* Released payload blocks are pooled per size class and handed back to the
+     next secret in that class, so the slot index must be injective over block
+     sizes: two lengths may share a slot only if they share a block size.
+
+     Indexing by bsz/8 breaks that on 32-bit, where block sizes are multiples
+     of 4 -- bsz 8 and bsz 12 both land in slot 1, and reusing the 8-byte
+     block for a 12-byte secret writes past it. The aliasing is invisible to a
+     create/destroy/create sequence on a 64-bit host, where no two block sizes
+     collide either way, so check the mapping itself rather than exercising
+     it. *)
+  let word = Sys.word_size / 8 in
+  let by_slot = Hashtbl.create 64 in
+  for len = 0 to 1024 do
+    let bsz = Helpers.block_size len in
+    let slot = Helpers.pool_slot len in
+    Alcotest.(check bool)
+      (Printf.sprintf "block size %d holds length %d" bsz len)
+      true (bsz > len);
+    Alcotest.(check int)
+      (Printf.sprintf "block size %d is a whole number of words" bsz)
+      0 (bsz mod word);
+    Alcotest.(check int)
+      (Printf.sprintf "slot for block size %d is indexed by word" bsz)
+      (bsz / word) slot;
+    match Hashtbl.find_opt by_slot slot with
+    | Some other when other <> bsz ->
+        Alcotest.failf "pool slot %d shared by block sizes %d and %d" slot other
+          bsz
+    | _ -> Hashtbl.replace by_slot slot bsz
+  done;
+  (* And the path that would trip over it: a block released by one size class
+     must never come back to a different one. *)
+  let t4 = Secret.create 4 in
+  Secret.fill t4 'A';
+  Secret.destroy t4;
+  let t8 = Secret.create 8 in
+  Secret.fill t8 'B';
+  Alcotest.(check string) "8-byte" "BBBBBBBB" (Secret.unsafe_to_string t8);
+  let t9 = Secret.create 9 in
+  Secret.fill t9 'C';
+  Alcotest.(check string)
+    "9-byte" (String.make 9 'C')
+    (Secret.unsafe_to_string t9);
+  Secret.destroy t8;
+  Secret.destroy t9
+
 let test_pool_reuse () =
   let before = Secret.pool_count () in
   let t = Secret.create 100 in
@@ -461,6 +508,7 @@ let () =
             test_status_default_tier;
           Alcotest.test_case "hardened" `Quick test_hardened;
           Alcotest.test_case "pool reuse" `Quick test_pool_reuse;
+          Alcotest.test_case "pool size classes" `Quick test_pool_size_classes;
           Alcotest.test_case "scratch" `Quick test_scratch;
           Alcotest.test_case "capabilities" `Quick test_capabilities;
           Alcotest.test_case "process" `Quick test_process;

@@ -55,6 +55,7 @@ int secret_os_random(unsigned char *buf, size_t n)
       if (errno == EINTR) continue;
       return errno ? errno : EIO;
     }
+    if (r == 0) return EIO;
     buf += (size_t) r; n -= (size_t) r;
   }
   return 0;

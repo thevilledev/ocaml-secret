@@ -15,6 +15,21 @@
 typedef void (*secret_release_hook_fn)(const unsigned char *, size_t, uint32_t);
 extern void secret_set_release_hook(secret_release_hook_fn f);
 
+/* Reuse-pool size-class mapping (secret_alloc.c). */
+extern size_t secret_pool_slot(size_t bsz);
+extern size_t secret_block_size_of(size_t len);
+
+CAMLprim value helper_block_size(value vlen)
+{
+  return Val_long((long) secret_block_size_of((size_t) Long_val(vlen)));
+}
+
+CAMLprim value helper_pool_slot(value vlen)
+{
+  size_t bsz = secret_block_size_of((size_t) Long_val(vlen));
+  return Val_long((long) secret_pool_slot(bsz));
+}
+
 static long hook_calls = 0, hook_nonzero = 0;
 static int hook_print = 0;
 

@@ -6,6 +6,10 @@ external peek : Secret.t -> int -> int = "helper_peek"
 external borrow_len : 'a -> int = "helper_borrow_len"
 external is_secret : 'a -> bool = "helper_is_secret"
 
+(* Reuse-pool size-class mapping, as the library computes it. *)
+external block_size : int -> int = "helper_block_size"
+external pool_slot : int -> int = "helper_pool_slot"
+
 (* Run [exe args] and return (exit status, stdout lines). *)
 let run_child exe args =
   let rd, wr = Unix.pipe () in

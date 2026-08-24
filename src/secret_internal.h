@@ -121,6 +121,11 @@ void secret_bump_fork_generation(void);
 uint32_t secret_fork_generation_now(void);
 size_t secret_pool_count(void);
 
+/* Reuse-pool size-class mapping. Exposed (not installed) so the test suite can
+   check that distinct block sizes never share a slot. */
+size_t secret_pool_slot(size_t bsz);
+size_t secret_block_size_of(size_t len);
+
 /* ---- secret_random.c ----------------------------------------------------- */
 
 /* Fill [n] bytes with OS entropy. Returns 0 on success, -1 when no OS source
@@ -148,8 +153,9 @@ static inline header_t secret_string_header(mlsize_t wosize)
 }
 
 /* Block size in bytes for a logical length: exactly the size
-   caml_alloc_string would use, so that a view is indistinguishable from an
-   ordinary string (caml_string_equal compares wosize first). */
+   caml_alloc_string would use (a multiple of sizeof(value)), so that a view
+   is indistinguishable from an ordinary string (caml_string_equal compares
+   wosize first). */
 static inline size_t secret_block_size(size_t len)
 {
   size_t wosize = (len + sizeof(value)) / sizeof(value);

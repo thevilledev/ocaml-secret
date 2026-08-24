@@ -27,6 +27,32 @@ jobs:
             opam install . --deps-only --with-test -y
             opam exec -- dune build @install @runtest'
 
+  linux32:
+    name: alpine i386 / OCaml 4.14 (32-bit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The other jobs are all 64-bit, but the C stubs size several things off
+      # `value`: the block-size arithmetic, the reuse pool's size classes (a
+      # slot index that aliases two classes hands a short block to a longer
+      # secret), and the empty-string sentinel. linux/386 runs natively on the
+      # x86_64 runner, and Alpine ships a native 4.14 ocamlopt for it.
+      - run: |
+          docker run --rm --platform linux/386 -v "$PWD:/src:ro" alpine:3.20 sh -ec '
+            apk add --no-cache ocaml ocaml-compiler-libs dune ocaml-findlib \
+              gcc musl-dev make patch tar curl rsync git bash opam
+            cp -r /src /work && cd /work && rm -rf _build
+            test "$(ocaml -e "print_int Sys.word_size")" = 32
+            export OPAMYES=1 OPAMROOT=/opamroot
+            opam init --disable-sandboxing --bare
+            opam switch create sys --packages=ocaml-system
+            eval $(opam env --switch=sys)
+            opam install dune-configurator alcotest
+            dune build @install
+            dune exec test/test_secret.exe
+            dune exec test/test_c_api.exe
+            dune exec test/test_fork.exe'
+
   windows:
     name: windows-mingw / OCaml 5.4 (best effort)
     runs-on: windows-latest

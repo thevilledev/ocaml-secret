@@ -13,6 +13,7 @@
 #include <caml/custom.h>
 #include <caml/bigarray.h>
 #include <caml/address_class.h>
+#include <caml/signals.h>
 
 #if defined(SECRET_HAVE_PTHREAD_ATFORK)
 #include <pthread.h>
@@ -25,6 +26,23 @@ static _Atomic int registry_lock_word = 0;
 static size_t live_count = 0;
 static int registry_initialised = 0;
 
+/* Hint to the core that it is in a spin loop. Purely an optimisation: on
+   platforms without one the loop still makes progress. */
+static inline void cpu_relax(void)
+{
+#if defined(__GNUC__) || defined(__clang__)
+#if defined(__i386__) || defined(__x86_64__)
+  __asm__ __volatile__("pause");
+#elif defined(__aarch64__) || defined(__arm__)
+  __asm__ __volatile__("yield");
+#endif
+#endif
+}
+
+/* Test-and-test-and-set: only the initial attempt and the retry after the
+   holder releases write to the line, so waiters do not fight each other for
+   exclusive ownership of it while someone else holds the lock. Holders can
+   run for as long as it takes to zeroize a payload (see destroy_payload). */
 void secret_registry_lock(void)
 {
   for (;;) {
@@ -33,6 +51,8 @@ void secret_registry_lock(void)
                                               memory_order_acquire,
                                               memory_order_relaxed))
       return;
+    while (atomic_load_explicit(&registry_lock_word, memory_order_relaxed))
+      cpu_relax();
   }
 }
 
@@ -95,13 +115,27 @@ static void destroy_payload(struct secret_hdr *h, int release)
   uintptr_t p;
   unsigned char *payload;
   uint32_t f;
-  /* Normal destruction serializes the ownership exchange with registry-wide
-     operations that inspect the mapping. wipe_all and atfork already hold
-     the registry lock and request deferred release. */
+  /* Hold the registry lock from the ownership exchange through the wipe. Two
+     invariants need it:
+
+     - atfork must not see a window where ptr is 0 but the payload still holds
+       the secret. The child handler skips entries whose ptr is 0, so a fork
+       in that window inherits unswept pages and defeats `Wipe_in_child`.
+     - wipe_all and atfork walk the registry under this lock and dereference
+       the mappings they find. Claiming ownership inside it means they never
+       inspect a payload this call has already released.
+
+     Zeroizing before the exchange would close the first window lock-free, but
+     it reopens the second. So the wipe stays inside, and the hold is O(secret
+     size) on a spinlock -- that is the trade.
+
+     wipe_all and atfork already hold the lock and request deferred release. */
   if (release) secret_registry_lock();
   p = atomic_exchange(&h->ptr, (uintptr_t) 0);
-  if (release) secret_registry_unlock();
-  if (p == 0) return;
+  if (p == 0) {
+    if (release) secret_registry_unlock();
+    return;
+  }
   payload = (unsigned char *) p;
   f = atomic_load(&h->flags);
   if (f & SF_CANARY) {
@@ -112,7 +146,8 @@ static void destroy_payload(struct secret_hdr *h, int release)
   }
   /* everything but the padding byte, so a stale view keeps a valid length */
   secret_zeroize(payload, h->bsz - 1);
-  atomic_store(&h->flags, f | SF_DESTROYED);
+  atomic_fetch_or(&h->flags, SF_DESTROYED);
+  if (release) secret_registry_unlock();
   if (release_hook != NULL) release_hook(payload, h->len, f);
   if (release) {
     secret_mem_release(h, payload);
@@ -210,12 +245,16 @@ int secret_borrow_string_or_secret(value v, const unsigned char **p, size_t *len
 
 static struct {
   header_t hd;
-  unsigned char data[8];
-} empty_block = { 0, { 0, 0, 0, 0, 0, 0, 0, 7 } };
+  unsigned char data[sizeof(value)];
+} empty_block;
 
 static value empty_string_value(void)
 {
-  if (empty_block.hd == 0) empty_block.hd = secret_string_header(1);
+  if (empty_block.hd == 0) {
+    memset(empty_block.data, 0, sizeof empty_block.data);
+    empty_block.data[sizeof(value) - 1] = (unsigned char) (sizeof(value) - 1);
+    empty_block.hd = secret_string_header(1);
+  }
   return (value) empty_block.data;
 }
 
@@ -388,10 +427,16 @@ CAMLprim value secret_ml_equal_string(value va, value vs)
 CAMLprim value secret_ml_view(value v)
 {
   struct secret_hdr *h = Hdr(v);
-  unsigned char *p = live_payload(h);
-  if (p == NULL) return empty_string_value();
+  unsigned char *p;
+  if (h == NULL) return empty_string_value();
+  /* Mark viewed before reading ptr, not after. Both accesses are seq_cst, so
+     if the load below sees a live pointer it precedes destroy's exchange,
+     which precedes destroy's read of the flags -- and that read therefore
+     sees SF_VIEWED and keeps the block mapped instead of freeing it under a
+     view we are about to hand out. The other order loses that race. */
   atomic_fetch_or(&h->flags, SF_VIEWED);
-  return (value) p;
+  p = live_payload(h);
+  return p == NULL ? empty_string_value() : (value) p;
 }
 
 /* A scoped view relies on its OCaml callback not retaining the value. It does
@@ -405,10 +450,34 @@ CAMLprim value secret_ml_scoped_view(value v)
 
 CAMLprim value secret_ml_fill_random(value v)
 {
+  CAMLparam1(v);
   struct secret_hdr *h = Hdr(v);
   unsigned char *p = live_payload(h);
-  if (p == NULL) return Val_long(-2);
-  return Val_long(secret_os_random(p, h->len));
+  size_t n;
+  int r;
+  if (p == NULL) CAMLreturn(Val_long(-2));
+  n = h->len;
+  /* Drop the runtime lock: the entropy call blocks until the kernel CRNG is
+     seeded, which would otherwise freeze this domain, and on OCaml 4 every
+     thread in the process. [v] is registered as a root, so the handle cannot
+     be finalized and [h] and [p] stay valid across the section. */
+  caml_enter_blocking_section();
+  r = secret_os_random(p, n);
+  caml_leave_blocking_section();
+  /* wipe_all may have swept the payload while the lock was down, in which case
+     the bytes just written would outlive it. Storage retired by wipe_all stays
+     mapped until the handle is finalized, so re-wiping it is safe; the lock
+     serializes that against a release claimed in the meantime. A payload that
+     is gone but not retired was taken by a concurrent destroy, which the
+     interface documents as a programming error -- report it and touch
+     nothing. */
+  secret_registry_lock();
+  if (atomic_load(&h->ptr) == 0) {
+    if (h->retired == p) secret_zeroize(p, n);
+    r = -2;
+  }
+  secret_registry_unlock();
+  CAMLreturn(Val_long(r));
 }
 
 /* A fresh, zero-filled bytes allocated directly in the major heap. */
