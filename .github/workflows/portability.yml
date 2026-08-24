@@ -1,0 +1,56 @@
+name: Portability
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  musl:
+    name: alpine (musl) / OCaml 5.4
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The ocaml/opam images run as the unprivileged `opam` user, which cannot
+      # write the runner's state files when used as a job container; run the
+      # image explicitly instead.
+      - run: |
+          docker run --rm -v "$PWD:/src" ocaml/opam:alpine-ocaml-5.4 sh -ec '
+            sudo cp -r /src /work && sudo chown -R opam /work && cd /work
+            opam install . --deps-only --with-test -y
+            opam exec -- dune build @install @runtest'
+
+  windows:
+    name: windows-mingw / OCaml 5.4 (best effort)
+    runs-on: windows-latest
+    continue-on-error: true
+    defaults:
+      run:
+        # PowerShell would treat `@install` as its splatting operator.
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
+        with:
+          ocaml-compiler: "5.4"
+      - run: opam install . --deps-only --with-test
+      - run: opam exec -- dune build @install @runtest
+
+  solo5-cross:
+    name: solo5 cross-build (best effort)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
+        with:
+          ocaml-compiler: "5.4"
+      - run: opam install ocaml-solo5 dune-configurator
+      - run: opam exec -- dune build -x solo5 @install
