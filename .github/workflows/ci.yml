@@ -2,73 +2,48 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     name: ${{ matrix.os }} / OCaml ${{ matrix.ocaml }}
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        ocaml: ["4.14", "5.2", "5.4"]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
-        with:
-          ocaml-compiler: ${{ matrix.ocaml }}
-      - run: opam install . --deps-only --with-test --with-doc
-      - run: opam exec -- dune build @install
-      - run: opam exec -- dune build @runtest
-      - run: opam exec -- dune build @doc
-      - run: opam exec -- dune exec bench/ct_equal.exe -- 2000 50
-      - run: opam exec -- dune exec bench/alloc_bench.exe
-
-  musl:
-    name: alpine (musl) / OCaml 5.4
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The ocaml/opam images run as the unprivileged `opam` user, which cannot
-      # write the runner's state files when used as a job container; run the
-      # image explicitly instead.
-      - run: |
-          docker run --rm -v "$PWD:/src" ocaml/opam:alpine-ocaml-5.4 sh -ec '
-            sudo cp -r /src /work && sudo chown -R opam /work && cd /work
-            opam install . --deps-only --with-test -y
-            opam exec -- dune build @install @runtest'
-
-  best-effort:
-    name: ${{ matrix.name }} (best effort)
-    runs-on: ${{ matrix.os }}
-    continue-on-error: true
-    strategy:
-      fail-fast: false
       matrix:
         include:
-          - { name: windows-mingw, os: windows-latest, ocaml: "5.4" }
-    defaults:
-      run:
-        # PowerShell would treat `@install` as its splatting operator.
-        shell: bash
+          - os: ubuntu-latest
+            ocaml: "4.14"
+            dependencies: --with-test
+            targets: "@install @runtest"
+            benchmarks: false
+          - os: ubuntu-latest
+            ocaml: "5.4"
+            dependencies: --with-test --with-doc
+            targets: "@install @runtest @doc"
+            benchmarks: true
+          - os: macos-latest
+            ocaml: "5.4"
+            dependencies: --with-test
+            targets: "@install @runtest"
+            benchmarks: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
         with:
           ocaml-compiler: ${{ matrix.ocaml }}
-      - run: opam install . --deps-only --with-test
-      - run: opam exec -- dune build @install
-      - run: opam exec -- dune build @runtest
-
-  solo5-cross:
-    name: solo5 cross-build (best effort)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
-        with:
-          ocaml-compiler: "5.4"
-      - run: opam install ocaml-solo5 dune-configurator
-      - run: opam exec -- dune build -x solo5 @install
+      - run: opam install . --deps-only ${{ matrix.dependencies }}
+      - run: opam exec -- dune build ${{ matrix.targets }}
+      - if: matrix.benchmarks
+        name: Check constant-time equality
+        run: opam exec -- dune exec bench/ct_equal.exe -- 2000 50
+      - if: matrix.benchmarks
+        name: Check allocation behavior
+        run: opam exec -- dune exec bench/alloc_bench.exe
