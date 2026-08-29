@@ -192,6 +192,63 @@ let test_views () =
   Alcotest.(check bool)
     "scoped views are not retained" false (Secret.status u).Secret.viewed
 
+let test_scoped_view_lifetime () =
+  Secret.Unsafe.with_string_view (s_of "string owner") (fun view ->
+      Gc.full_major ();
+      Gc.compact ();
+      Alcotest.(check string) "string owner retained" "string owner" view);
+  Secret.Unsafe.with_bytes_view (s_of "bytes owner") (fun view ->
+      Gc.full_major ();
+      Gc.compact ();
+      Alcotest.(check string)
+        "bytes owner retained" "bytes owner" (Bytes.to_string view));
+  Secret.Unsafe.with_bigstring (s_of "bigarray owner") (fun view ->
+      Gc.full_major ();
+      Gc.compact ();
+      Alcotest.(check int) "bigarray owner retained" 14
+        (Bigarray.Array1.dim view);
+      Alcotest.(check char) "bigarray contents" 'b'
+        (Bigarray.Array1.get view 0));
+  let escaped = ref None in
+  (match
+     Secret.Unsafe.with_bigstring (s_of "exception owner") (fun view ->
+         escaped := Some view;
+         Gc.full_major ();
+         Gc.compact ();
+         failwith "callback")
+  with
+  | _ -> Alcotest.fail "expected callback exception"
+  | exception Failure message ->
+      Alcotest.(check string) "callback exception" "callback" message);
+  let escaped = Option.get !escaped in
+  Alcotest.(check int) "exception revokes bigarray" 0
+    (Bigarray.Array1.dim escaped);
+  (match
+     Secret.Unsafe.with_string_view (s_of "raise owner") (fun view ->
+         Gc.full_major ();
+         Gc.compact ();
+         Alcotest.(check string) "owner retained before raise" "raise owner" view;
+         raise Exit)
+   with
+  | _ -> Alcotest.fail "expected Exit"
+  | exception Exit -> ())
+
+let test_unscoped_view_never_reused () =
+  let t = s_of "parked-secret" in
+  let view = Secret.Unsafe.string_view t in
+  let pooled_before_destroy = Secret.pool_count () in
+  Secret.destroy t;
+  Alcotest.(check int)
+    "viewed allocation not pooled" pooled_before_destroy
+    (Secret.pool_count ());
+  for _ = 1 to 1_000 do
+    let replacement = Secret.create 13 in
+    Secret.fill replacement 'x';
+    Secret.destroy replacement
+  done;
+  Alcotest.(check string)
+    "stale view never reused" (String.make 13 '\000') view
+
 let test_bigstring_view () =
   let t = s_of "bigstring" in
   let escaped = ref None in
@@ -369,11 +426,14 @@ let test_hardened () =
     (Secret.status u).Secret.page_backed;
   Secret.destroy t;
   Alcotest.(check string) "stale hardened view zero" (String.make 48 '\000') v;
-  (* pooled reuse of hardened block *)
+  (* a viewed hardened block is parked rather than reused *)
   let t2 = Secret.create ~hardened:true 48 in
   Alcotest.(check bool)
-    "reuse usable" true
+    "subsequent allocation usable" true
     (Secret.equal_string t2 (String.make 48 '\000'));
+  Secret.fill t2 'x';
+  Alcotest.(check string)
+    "stale hardened view never reused" (String.make 48 '\000') v;
   Secret.destroy t2;
   Secret.destroy u
 
@@ -541,9 +601,9 @@ let test_wipe_all () =
   (* secrets created afterwards work normally *)
   let c = s_of "c" in
   Alcotest.(check string) "new secret" "c" (Secret.unsafe_to_string c);
-  (* Storage deferred for concurrency safety must still be released when the
-     destroyed handle is finalized. A pool-sized payload makes that release
-     observable without inspecting freed memory. *)
+  (* Storage retained during a process-wide registry sweep must still be
+     released when the destroyed handle is finalized. A pool-sized payload
+     makes that release observable without inspecting freed memory. *)
   let before = Secret.pool_count () in
   let weak = Weak.create 1 in
   let allocate_and_wipe () =
@@ -581,6 +641,10 @@ let () =
           Alcotest.test_case "of_bytes wipe" `Quick test_of_bytes_wipe;
           Alcotest.test_case "expose" `Quick test_expose;
           Alcotest.test_case "views" `Quick test_views;
+          Alcotest.test_case "scoped view lifetime" `Quick
+            test_scoped_view_lifetime;
+          Alcotest.test_case "unscoped view is never reused" `Quick
+            test_unscoped_view_never_reused;
           Alcotest.test_case "bigstring view" `Quick test_bigstring_view;
           Alcotest.test_case "init/random" `Quick test_init_random;
           Alcotest.test_case "with_secret" `Quick test_with_secret;

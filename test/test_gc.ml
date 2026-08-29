@@ -58,15 +58,21 @@ let test_finalizer_releases () =
 
 let test_finalizer_zeroes () =
   (* A view outlives its owner; after the owner is collected the view must
-     read as zeros (the block was zeroized, and is either pooled or reused
-     by another secret which is also zero at that point). *)
+     read as zeros and its parked block must never be reused. *)
   let view =
     let t = Secret.of_string "finalize-me-please" in
     Secret.Unsafe.string_view t
   in
   Gc.full_major ();
   Gc.full_major ();
-  Alcotest.(check string) "zeroed by finalizer" (String.make 18 '\000') view
+  Alcotest.(check string) "zeroed by finalizer" (String.make 18 '\000') view;
+  for _ = 1 to 1_000 do
+    let replacement = Secret.create 18 in
+    Secret.fill replacement 'x';
+    Secret.destroy replacement
+  done;
+  Alcotest.(check string)
+    "finalized view never reused" (String.make 18 '\000') view
 
 let test_gc_pressure_accounting () =
   (* Out-of-heap bytes must pace the major GC: allocate ~400 MiB of secrets

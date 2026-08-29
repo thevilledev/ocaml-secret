@@ -28,9 +28,10 @@ let aes =
 - `Secret_unix` reads and writes directly between file descriptors and secret
   memory.
 
-`Secret.Unsafe` exposes zero-copy views. Keep the owner alive while a view is
-used and do not retain scoped views. After `destroy`, an unscoped view contains
-zeros or data from a later pooled secret.
+`Secret.Unsafe` exposes zero-copy views. Keep the owner alive while an unscoped
+view is used and do not retain scoped views. After `destroy`, unscoped-view
+storage is zeroized and permanently retained; it is never reused for another
+secret. Prefer scoped views to avoid this process-lifetime memory retention.
 
 ## Limits
 
@@ -38,8 +39,11 @@ The library cannot erase copies made by callers, other libraries, the kernel,
 the C stack, or registers. Existing crypto libraries may retain expanded key
 schedules in the OCaml heap. Page locking is limited by the OS and does not
 cover hibernation. Exit handlers do not run after signals, `Unix._exit`, or
-runtime failure. Root access, `ptrace`, cold-boot attacks, and compromised
-kernels or hypervisors are out of scope.
+runtime failure. Scratch buffers can be moved by major-heap compaction, leaving
+historical copies that cannot be reached by a later wipe. Mutation and
+destruction require caller synchronization across domains. Root access,
+`ptrace`, cold-boot attacks, and compromised kernels or hypervisors are out of
+scope.
 
 Use an HSM or KMS when the threat model requires hardware-backed isolation.
 

@@ -133,6 +133,8 @@ end
 (* ---- views -------------------------------------------------------------------- *)
 
 module Unsafe = struct
+  let keep_alive t = ignore (Sys.opaque_identity t)
+
   let scoped_string_view t =
     if is_destroyed_c t then raise Destroyed;
     scoped_view_c t
@@ -142,8 +144,14 @@ module Unsafe = struct
     view_c t
 
   let bytes_view t = Bytes.unsafe_of_string (string_view t)
-  let with_string_view t f = f (scoped_string_view t)
-  let with_bytes_view t f = f (Bytes.unsafe_of_string (scoped_string_view t))
+
+  let with_string_view t f =
+    let view = scoped_string_view t in
+    Fun.protect ~finally:(fun () -> keep_alive t) (fun () -> f view)
+
+  let with_bytes_view t f =
+    let view = Bytes.unsafe_of_string (scoped_string_view t) in
+    Fun.protect ~finally:(fun () -> keep_alive t) (fun () -> f view)
 
   let init ?hardened n f =
     let t = create ?hardened n in
@@ -159,13 +167,12 @@ module Unsafe = struct
   let with_bigstring t f =
     if is_destroyed_c t then raise Destroyed;
     let ba = bigstring_view_c t in
-    match f ba with
-    | r ->
-        revoke_bigstring_c ba;
-        r
-    | exception e ->
-        revoke_bigstring_c ba;
-        raise e
+    Fun.protect
+      ~finally:(fun () ->
+        Fun.protect
+          ~finally:(fun () -> keep_alive t)
+          (fun () -> revoke_bigstring_c ba))
+      (fun () -> f ba)
 end
 
 (* ---- construction (continued) ---------------------------------------------------- *)
@@ -183,15 +190,15 @@ let init ?hardened n f =
           destroy t;
           raise e)
 
-let entropy_source : (bytes -> unit) option ref = ref None
-let set_entropy_source f = entropy_source := Some f
+let entropy_source : (bytes -> unit) option Atomic.t = Atomic.make None
+let set_entropy_source f = Atomic.set entropy_source (Some f)
 
 let random ?hardened n =
   let t = create ?hardened n in
   (match fill_random_c t with
   | 0 -> ()
   | -1 -> (
-      match !entropy_source with
+      match Atomic.get entropy_source with
       | None ->
           destroy t;
           raise Entropy_unavailable

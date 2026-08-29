@@ -109,7 +109,8 @@ void secret_set_release_hook(secret_release_hook_fn f) { release_hook = f; }
 /* ---- payload lifecycle ------------------------------------------------------ */
 
 /* Zeroize the payload. Release it immediately when [release] is nonzero;
-   otherwise retain it until finalization for concurrent-reader safety. */
+   otherwise retain it until finalization. Process-wide and atfork sweeps call
+   this while walking the registry under its lock. */
 static void destroy_payload(struct secret_hdr *h, int release)
 {
   uintptr_t p;
@@ -152,9 +153,8 @@ static void destroy_payload(struct secret_hdr *h, int release)
   if (release) {
     secret_mem_release(h, payload);
   } else {
-    /* wipe_all permits other domains to finish an in-flight access. Keep the
-       zeroed storage valid until the owning handle can be finalized, but do
-       not lose the pointer needed to release it then. The registry lock
+    /* Keep the zeroed storage valid until the owning handle can be finalized,
+       without losing the pointer needed to release it then. The registry lock
        serializes this store with finalization; the atfork child is single
        threaded. */
     h->retired = payload;
@@ -498,12 +498,10 @@ CAMLprim value secret_ml_fill_random(value v)
   caml_enter_blocking_section();
   r = secret_os_random(p, n);
   caml_leave_blocking_section();
-  /* wipe_all may have swept the payload while the lock was down, in which case
-     the bytes just written would outlive it. Storage retired by wipe_all stays
-     mapped until the handle is finalized, so re-wiping it is safe; the lock
-     serializes that against a release claimed in the meantime. A payload that
-     is gone but not retired was taken by a concurrent destroy, which the
-     interface documents as a programming error -- report it and touch
+  /* The public contract requires process-wide wiping and destruction to be
+     synchronized with this blocking operation. Detect and re-wipe a retained
+     payload anyway as defense in depth. A payload that is gone but not retired
+     was taken by an unsupported concurrent destroy; report it and touch
      nothing. */
   secret_registry_lock();
   if (atomic_load(&h->ptr) == 0) {

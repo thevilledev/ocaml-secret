@@ -10,9 +10,8 @@ val read : Unix.file_descr -> Secret.t -> off:int -> len:int -> int
 (** [read fd t ~off ~len] reads at most [len] bytes into [t] at [off] with a
     single [read(2)] (retried on [EINTR]) and returns the number of bytes read
     (0 at end of file). Raises [Unix.Unix_error] on I/O errors and
-    [Invalid_argument] on bounds errors.
-    If {!Secret.wipe_all} runs while the read is blocked, bytes received after
-    the wipe are zeroized and [Secret.Destroyed] is raised.
+    [Invalid_argument] on bounds errors. The caller must not mutate or destroy
+    [t], or call {!Secret.wipe_all}, while the read is in flight.
     @raise Secret.Destroyed *)
 
 val read_exactly : Unix.file_descr -> Secret.t -> off:int -> len:int -> unit
@@ -33,7 +32,9 @@ val read_file : ?hardened:bool -> ?max:int -> string -> Secret.t
     [Unix.Unix_error] on I/O errors. *)
 
 val write : Unix.file_descr -> Secret.t -> off:int -> len:int -> int
-(** A single [write(2)] from the secret memory; returns the bytes written. *)
+(** A single [write(2)] from the secret memory; returns the bytes written. The
+    caller must not mutate or destroy the secret, or call {!Secret.wipe_all},
+    while the write is in flight. *)
 
 val write_all : Unix.file_descr -> Secret.t -> unit
 (** Writes the whole secret, looping on short writes. *)

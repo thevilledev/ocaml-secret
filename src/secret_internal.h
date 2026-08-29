@@ -41,15 +41,14 @@
 #define SF_LOCK_UNSUPPORTED  (1u << 10) /* platform cannot lock pages */
 #define SF_NODUMP_UNSUPPORTED (1u << 11)
 
-/* Payload blocks up to this size are pooled for reuse (never returned to the
-   C allocator) so that a stale view can never observe unmapped or foreign
-   memory. Larger unviewed blocks are released. */
+/* Unviewed payload blocks up to this size may be pooled for reuse. Viewed
+   blocks are permanently parked instead, and larger unviewed blocks are
+   released. */
 #define SECRET_POOL_MAX_BSZ   (64 * 1024)
 
-/* Bound cached, unowned memory. Viewed blocks that do not fit in the pool
-   still have to remain mapped, but ordinary create/destroy traffic must not
-   grow the process indefinitely. This limit applies independently to each
-   allocation tier. */
+/* Bound cached, unowned memory from ordinary create/destroy traffic. Viewed
+   blocks are outside this bound because their storage is never reused. This
+   limit applies independently to each allocation tier. */
 #define SECRET_POOL_MAX_COUNT 64
 #define SECRET_POOL_MAX_PER_CLASS 8
 
@@ -61,7 +60,7 @@
 
 struct secret_hdr {
   _Atomic(uintptr_t) ptr;      /* payload pointer; 0 <=> destroyed */
-  unsigned char *retired;      /* wiped by wipe_all/atfork; release at finalize */
+  unsigned char *retired;      /* swept by wipe_all/atfork; release at finalize */
   unsigned char *raw;          /* base of the allocation or mapping */
   size_t raw_size;             /* size of the allocation or mapping */
   size_t len;                  /* logical length */

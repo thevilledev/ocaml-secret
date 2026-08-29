@@ -1,7 +1,6 @@
-/* read(2)/write(2) directly on secret memory, with the runtime lock
-   released. The payload pointer is taken before entering the blocking
-   section; destroying the secret concurrently from another thread is a
-   programming error (memory stays mapped, so it cannot crash). */
+/* read(2)/write(2) directly on secret memory, with the runtime lock released.
+   The payload pointer is taken before entering the blocking section; callers
+   must synchronize mutation, destruction, and process-wide wiping. */
 
 #include <errno.h>
 #include <unistd.h>

@@ -10,11 +10,10 @@
                 raw = mapping base, raw_size = page + inner + page,
                 inner = round_up(16 + bsz, page), payload = raw + page + inner - bsz
 
-   Released payload blocks are zero and keep a valid OCaml string header. They
-   are pooled per size class and reused only for other secrets, so a stale
-   view (a `string` handed out by Secret.Unsafe) can never point to unmapped
-   or foreign memory. Unviewed blocks larger than SECRET_POOL_MAX_BSZ are
-   returned to the OS. */
+   Released, unviewed payload blocks are pooled per size class. A payload that
+   has produced an unscoped view is zeroized and permanently parked instead:
+   it is never unmapped or reused for another secret. Unviewed blocks larger
+   than SECRET_POOL_MAX_BSZ are returned to the OS. */
 
 #include "secret_internal.h"
 
@@ -47,19 +46,25 @@ uint32_t secret_fork_generation_now(void) { return atomic_load(&secret_fork_gene
 
 size_t secret_page_size(void)
 {
-  static size_t cached = 0;
-  if (cached) return cached;
+  static _Atomic size_t cached = SIZE_MAX;
+  size_t page = atomic_load_explicit(&cached, memory_order_acquire);
+  size_t expected = SIZE_MAX;
+  if (page != SIZE_MAX) return page;
 #if defined(SECRET_CONFIG_FREESTANDING)
-  cached = 0;
+  page = 0;
 #elif defined(_WIN32)
   SYSTEM_INFO si;
   GetSystemInfo(&si);
-  cached = (size_t) si.dwPageSize;
+  page = (size_t) si.dwPageSize;
 #else
   long p = sysconf(_SC_PAGESIZE);
-  cached = p > 0 ? (size_t) p : 4096;
+  page = p > 0 ? (size_t) p : 4096;
 #endif
-  return cached;
+  if (atomic_compare_exchange_strong_explicit(
+          &cached, &expected, page, memory_order_release,
+          memory_order_relaxed))
+    return page;
+  return expected;
 }
 
 /* ---- canary ---------------------------------------------------------------- */
@@ -186,9 +191,8 @@ size_t secret_pool_count(void)
   return count;
 }
 
-/* A block that is too large for the pool but has been viewed must stay
-   mapped forever; we keep such blocks on a separate "parking" list so the
-   memory stays valid (zeroized). They are never reused. */
+/* Every viewed block stays mapped forever so an escaped view remains valid
+   and can never disclose another secret. */
 static void park_forever(unsigned char *payload)
 {
   (void) payload; /* intentionally leaked: stays mapped and zero */
@@ -224,15 +228,15 @@ static int tier_a_alloc(struct secret_hdr *h, uint32_t req_flags)
 static void tier_a_release(struct secret_hdr *h, unsigned char *payload, int viewed)
 {
   size_t bsz = h->bsz;
+  if (viewed) {
+    park_forever(payload);
+    return;
+  }
   if (bsz <= SECRET_POOL_MAX_BSZ &&
       pool_push(pool_a, pool_a_slot_counts, &pool_a_count, bsz, payload)) {
     return;
   }
-  if (viewed) {
-    park_forever(payload);
-  } else {
-    free(payload - SECRET_PREFIX_BYTES);
-  }
+  free(payload - SECRET_PREFIX_BYTES);
 }
 
 /* ---- tier (b) ------------------------------------------------------------ */
@@ -340,15 +344,15 @@ static void tier_b_release(struct secret_hdr *h, unsigned char *payload, int vie
   size_t bsz = h->bsz, inner, map_size;
   tier_b_geometry(bsz, page, &inner, &map_size);
   secret_mem_unlock(h);
+  if (viewed) {
+    park_forever(payload);
+    return;
+  }
   if (bsz <= SECRET_POOL_MAX_BSZ &&
       pool_push(pool_b, pool_b_slot_counts, &pool_b_count, bsz, payload)) {
     return;
   }
-  if (viewed) {
-    park_forever(payload);
-  } else {
-    munmap(h->raw, map_size);
-  }
+  munmap(h->raw, map_size);
 }
 
 #endif /* SECRET_TIER_B */
