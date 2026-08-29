@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="What the OCaml secret library guarantees, what it cannot guarantee, and what each platform actually provides.">
+    <meta name="theme-color" content="#ffffff">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="secret: guarantees and limits">
+    <meta property="og:description" content="The threat model, the per-value status record, view lifetimes, and the platform matrix.">
+    <meta property="og:url" content="https://ville.dev/ocaml-secret/guarantees.html">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="secret: guarantees and limits">
+    <meta name="twitter:description" content="The threat model, the per-value status record, view lifetimes, and the platform matrix.">
+    <link rel="canonical" href="https://ville.dev/ocaml-secret/guarantees.html">
+    <link rel="stylesheet" href="styles.css">
+    <title>secret: guarantees and limits</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <nav class="top" aria-label="Primary navigation">
+      [ <a href="index.html">overview</a> |
+      <a href="usage.html">usage</a> |
+      guarantees |
+      <a href="benchmarks.html">benchmarks</a> |
+      <a href="development.html">dev</a> |
+      <a href="https://github.com/thevilledev/ocaml-secret">source</a> ]
+    </nav>
+
+    <main id="content">
+      <h1>Guarantees and limits</h1>
+
+      <p>
+        A library like this is only worth using if it is precise about where it
+        stops. This page states the guarantees, the things that look like
+        guarantees but are best effort, and the things that are outside its
+        reach entirely.
+      </p>
+
+      <h2 id="gc">Why the heap is the problem</h2>
+
+      <p>
+        A key in an OCaml <code>bytes</code> is not in one place. The minor
+        collector promotes a surviving block by copying it into the major heap
+        and leaving the original bytes behind in the minor heap;
+        <code>Gc.compact</code> moves major-heap blocks the same way. Neither
+        erases the source. By the time you call <code>Bytes.fill</code> you are
+        erasing the newest copy, not the ones the runtime left in its wake.
+      </p>
+
+      <p>
+        A <code>Secret.t</code> is a small custom block in the heap that owns a
+        payload allocated in C memory. The handle may be copied and moved
+        freely; the payload never is. There is exactly one place to erase, and
+        the library erases it with a primitive the C compiler is not allowed to
+        optimise away.
+      </p>
+
+      <h2 id="guaranteed">What is guaranteed</h2>
+
+      <dl>
+        <dt><strong>The payload is never copied by the GC.</strong></dt>
+        <dd>
+          It lives outside the heap for the whole life of the value. Promotion
+          and compaction move the handle, not the bytes.
+        </dd>
+
+        <dt><strong>It is zeroized before its memory can be reused.</strong></dt>
+        <dd>
+          On <code>destroy</code>, on finalization of the handle, and on
+          <code>wipe_all</code> at normal exit. The zeroization uses
+          <code>memset_explicit</code>, <code>explicit_bzero</code>,
+          <code>explicit_memset</code>, <code>memset_s</code> or
+          <code>SecureZeroMemory</code>, whichever the platform probe finds,
+          falling back to a volatile function pointer behind a barrier. The
+          choice is compiled into its own translation unit so that only
+          link-time optimisation could see across the call, and
+          <code>(Secret.capabilities ()).zeroize_primitive</code> names it.
+        </dd>
+
+        <dt><strong>Comparison is constant time.</strong></dt>
+        <dd>
+          <code>equal</code> and <code>equal_string</code> compare the contents
+          in C in time proportional to the length and independent of the values.
+          Lengths are compared first with an ordinary branch: the length is not
+          treated as secret. There is deliberately no <code>compare</code> and
+          no <code>hash</code>.
+        </dd>
+
+        <dt><strong>The contents cannot leak by accident.</strong></dt>
+        <dd>
+          Polymorphic <code>compare</code> and <code>Marshal</code> raise
+          <code>Invalid_argument</code>; <code>Hashtbl.hash</code> ignores the
+          payload; <code>pp</code> prints <code>&lt;secret:32B&gt;</code>. Secret
+          bytes reach OCaml values only through functions whose names contain
+          <code>expose</code>, <code>unsafe</code> or <code>view</code>. That is
+          a greppable list.
+        </dd>
+
+        <dt><strong>Use after destruction raises.</strong></dt>
+        <dd>
+          Every accessor raises <code>Secret.Destroyed</code> instead of
+          returning stale bytes or crashing. <code>destroy</code> is idempotent,
+          and <code>length</code> and <code>status</code> keep working.
+        </dd>
+      </dl>
+
+      <h2 id="limits">What is not guaranteed</h2>
+
+      <p>
+        None of the following is a bug in the library. They are the boundary of
+        what any userspace library can do.
+      </p>
+
+      <ul>
+        <li>
+          Copies a cryptographic primitive spills to the C stack or to
+          registers.
+        </li>
+        <li>
+          Key-equivalent data that a library builds in the OCaml heap from a
+          <code>string</code> key &mdash; an expanded AES schedule, for example.
+          A zero-copy view removes the raw-key copy, not the schedule. This is
+          measured in <a href="benchmarks.html#census">the leak census</a>.
+        </li>
+        <li>
+          Copies the kernel makes: the page cache for a file you read, socket
+          buffers, a hibernation image.
+        </li>
+        <li>
+          Copies you make yourself through <code>expose</code>,
+          <code>unsafe_to_string</code>, or a view you pass to something that
+          copies.
+        </li>
+        <li>
+          Zeroization when the process dies without running handlers.
+        </li>
+        <li>
+          Page locking and core-dump exclusion, which are best effort and
+          reported rather than assumed &mdash; see <a href="#status">status</a>.
+        </li>
+        <li>
+          Anything against a root user, <code>ptrace</code>, a cold-boot attack,
+          or a compromised kernel or hypervisor.
+        </li>
+      </ul>
+
+      <div class="notice">
+        <p>
+          <strong>Use an HSM or a KMS</strong> when the threat model requires
+          that the key never be readable by the process at all. This library
+          narrows the window and the number of copies; it does not move the key
+          out of your address space.
+        </p>
+      </div>
+
+      <h2 id="exit">Where the wipe happens, and where it does not</h2>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Where the zeroization happens</caption>
+          <thead>
+            <tr><th scope="col">Path out</th><th scope="col">Payload zeroized</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>Secret.destroy</code></td><td>Yes, immediately.</td></tr>
+            <tr><td>Handle becomes unreachable</td><td>Yes, when the finalizer runs.</td></tr>
+            <tr><td><code>Secret.wipe_all</code></td><td>Yes, every live secret in the process.</td></tr>
+            <tr><td>Normal exit, <code>exit n</code>, uncaught exception</td><td>Yes, through <code>at_exit</code>.</td></tr>
+            <tr><td>Exit from a spawned domain</td><td>Yes.</td></tr>
+            <tr><td><code>fork</code> child under <code>`Wipe_in_child</code></td><td>Yes, in the child.</td></tr>
+            <tr><td><code>Unix._exit</code></td><td><strong>No.</strong> No handler runs.</td></tr>
+            <tr><td>Fatal signal</td><td><strong>No.</strong> Wipe from your own handler.</td></tr>
+            <tr><td>Runtime fatal error</td><td><strong>No.</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        Every row above the last two is asserted by <code>test_atexit</code>,
+        <code>test_gc</code> or <code>test_fork</code>, mostly by running a
+        child process and inspecting how it died. The two that cannot be
+        asserted are the two that do not happen.
+      </p>
+
+      <p>
+        <code>wipe_all</code> is registered with <code>Stdlib.at_exit</code> when
+        the module is initialised, which is before any handler registered by
+        code that uses it. Handlers therefore run first and still see live
+        secrets.
+      </p>
+
+      <h2 id="tiers">Two tiers</h2>
+
+      <div class="table-scroll">
+        <table>
+          <caption>What each tier gives a single value</caption>
+          <thead>
+            <tr>
+              <th scope="col">Property</th>
+              <th scope="col">Default</th>
+              <th scope="col">Hardened</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Backing memory</td><td><code>calloc</code></td><td>Private <code>mmap</code> of its own</td></tr>
+            <tr><td>Out of the OCaml heap</td><td>Yes</td><td>Yes</td></tr>
+            <tr><td>Zeroized on release</td><td>Yes</td><td>Yes</td></tr>
+            <tr><td>Guard pages either side</td><td>&mdash;</td><td>Yes</td></tr>
+            <tr><td>Canary before the block header</td><td>&mdash;</td><td>Yes, checked on release</td></tr>
+            <tr><td>Locked into RAM</td><td>&mdash;</td><td>Best effort, reported</td></tr>
+            <tr><td>Excluded from core dumps</td><td>&mdash;</td><td>Best effort, reported</td></tr>
+            <tr><td>Address space per secret</td><td>Payload plus 16 bytes</td><td>At least three pages</td></tr>
+            <tr><td>Cost</td><td><a href="benchmarks.html#allocation">~100&nbsp;ns</a></td><td><a href="benchmarks.html#allocation">~2&nbsp;&micro;s</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        Both tiers pool released payload blocks by size class and reuse them
+        only for other secrets. A pooled block is zero and carries a valid OCaml
+        string header, which is what makes a stale view harmless rather than a
+        crash. Unviewed blocks above the pool's size limit go back to the OS.
+      </p>
+
+      <p>
+        <code>~hardened:true</code> is a request. Where the platform has no
+        <code>mmap</code> &mdash; Windows, or a freestanding target &mdash; the
+        allocation falls back to the default tier and
+        <code>status.page_backed</code> is <code>false</code>.
+      </p>
+
+      <h2 id="status">Nothing is silent</h2>
+
+      <p>
+        Every hardening feature reports its outcome per value.
+        <code>Secret.status</code> never raises and works after
+        <code>destroy</code>.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption><code>Secret.status</code></caption>
+          <thead>
+            <tr><th scope="col">Field</th><th scope="col">Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>page_backed</code></td><td>The hardened tier was actually obtained.</td></tr>
+            <tr><td><code>guard_pages</code></td><td>Inaccessible pages sit on both sides of the payload.</td></tr>
+            <tr><td><code>canary</code></td><td>A canary precedes the header; corruption aborts on release.</td></tr>
+            <tr><td><code>lock</code></td><td>The outcome of <code>mlock</code>; see below.</td></tr>
+            <tr><td><code>no_core_dump</code></td><td><code>`Yes</code>, <code>`Unsupported</code>, or <code>`Not_requested</code>.</td></tr>
+            <tr><td><code>wipe_on_fork</code></td><td><code>MADV_WIPEONFORK</code> is in effect for this mapping.</td></tr>
+            <tr><td><code>viewed</code></td><td>An unscoped view was handed out at some point.</td></tr>
+            <tr><td><code>destroyed</code></td><td>The payload has been zeroized and released.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <caption>The <code>lock</code> variant</caption>
+          <thead>
+            <tr><th scope="col">Value</th><th scope="col">Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>`Locked</code></td><td>The pages are locked in RAM.</td></tr>
+            <tr><td><code>`Failed errno</code></td><td><code>ENOMEM</code> means <code>RLIMIT_MEMLOCK</code> was reached; <code>EPERM</code> means the process lacks <code>IPC_LOCK</code>.</td></tr>
+            <tr><td><code>`Lost_on_fork</code></td><td>Locked before a <code>fork</code>. Locks are not inherited; call <code>Secret.after_fork</code>.</td></tr>
+            <tr><td><code>`Unsupported</code></td><td>The platform cannot lock pages.</td></tr>
+            <tr><td><code>`Not_requested</code></td><td>The secret is not hardened.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        <code>Secret.capabilities ()</code> answers the same questions for the
+        build and the platform as a whole, before any secret exists. It also
+        reports the page size and the name of the zeroization primitive that was
+        compiled in.
+      </p>
+
+      <h2 id="views">View lifetimes</h2>
+
+      <p>
+        A view is an ordinary OCaml <code>string</code> or <code>bytes</code>
+        whose block header was written in front of the secret memory &mdash; a
+        representation the runtime already supports and uses for static data.
+        That is what lets an unmodified <code>string</code>-based API, including
+        a C stub using <code>String_val</code>, read secret memory without a
+        copy.
+      </p>
+
+      <p>The rules that come with it:</p>
+
+      <ul>
+        <li>A view is valid only while its owner is alive. After
+          <code>destroy</code> it reads as zeros.</li>
+        <li>Store an unscoped view only next to its owner, so the owner stays
+          reachable for as long as the view does.</li>
+        <li>A scoped view must not escape its callback. The bigstring view is
+          revoked when the callback returns: its length becomes 0 and further
+          access raises <code>Invalid_argument</code>. Sub-views made with
+          <code>Bigarray.Array1.sub</code> inside the callback cannot be revoked.</li>
+        <li>A view is exempt from none of the copying hazards of an ordinary
+          string. <code>String.sub</code>, <code>^</code>, <code>compare</code>
+          and <code>Marshal</code> all copy.</li>
+      </ul>
+
+      <p>
+        A view that outlives its owner cannot crash the program: released blocks
+        are pooled for other secrets and are never handed back to the C
+        allocator or unmapped while a view could exist. What such a view can do
+        is read <em>another</em> secret. That is a bug in the calling code, and
+        it is why <code>status.viewed</code> exists.
+      </p>
+
+      <p>
+        On OCaml 4.14 the runtime classifies out-of-heap blocks through the page
+        table, so polymorphic <code>compare</code>, <code>=</code>,
+        <code>Hashtbl.hash</code> and <code>Marshal</code> treat a view as a
+        foreign pointer: comparison is by address and marshalling fails.
+        <code>String.equal</code>, every <code>String</code> and
+        <code>Bytes</code> function, and C stubs using <code>String_val</code>
+        behave identically on 4.14 and 5.x. Use <code>Secret.equal</code> for
+        contents, which is constant time on both.
+      </p>
+
+      <h2 id="fork">Fork</h2>
+
+      <p>
+        A forked child inherits copies of every secret, and memory locks are
+        never inherited. The policy is explicit.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption><code>Secret.set_fork_policy</code></caption>
+          <thead>
+            <tr><th scope="col">Policy</th><th scope="col">Effect in the child</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>`Keep</code> (default)</td>
+              <td>Secrets are inherited. Locks are lost, and
+                <code>status.lock</code> becomes <code>`Lost_on_fork</code> until
+                <code>Secret.after_fork</code> re-establishes them.</td>
+            </tr>
+            <tr>
+              <td><code>`Wipe_in_child</code></td>
+              <td>An <code>atfork</code> handler zeroizes every secret in the
+                child. On Linux, live and subsequently created hardened secrets
+                also get <code>MADV_WIPEONFORK</code>, so the kernel gives the
+                child zero pages instead. Switching back to <code>`Keep</code>
+                revokes that advice.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="platforms">Platform matrix</h2>
+
+      <p>
+        Features are probed by a compile-and-link test at build time. A probe
+        that cannot run reports the feature as unavailable and the C code takes
+        a portable path, so a missing feature is never a build failure.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Availability by platform</caption>
+          <thead>
+            <tr>
+              <th scope="col">Feature</th>
+              <th scope="col">Linux</th>
+              <th scope="col">macOS</th>
+              <th scope="col">BSD</th>
+              <th scope="col">Windows</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Out-of-heap payload, zeroization</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+            <tr><td>Constant-time <code>equal</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+            <tr><td>OS entropy for <code>random</code></td><td><code>getrandom</code></td><td><code>getentropy</code></td><td><code>getentropy</code>, <code>arc4random_buf</code></td><td><code>BCryptGenRandom</code></td></tr>
+            <tr><td>Guard pages and canary</td><td>yes</td><td>yes</td><td>yes</td><td>&mdash;</td></tr>
+            <tr><td>Page locking</td><td><code>mlock</code></td><td><code>mlock</code></td><td><code>mlock</code></td><td>&mdash;</td></tr>
+            <tr><td>Core-dump exclusion</td><td><code>MADV_DONTDUMP</code></td><td>&mdash;</td><td><code>MADV_NOCORE</code>, <code>MAP_CONCEAL</code></td><td>&mdash;</td></tr>
+            <tr><td>Wipe-on-fork advice</td><td><code>MADV_WIPEONFORK</code></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td></tr>
+            <tr><td><code>atfork</code> wipe policy</td><td>yes</td><td>yes</td><td>yes</td><td>&mdash;</td></tr>
+            <tr><td>Debugger denial in <code>Process.harden</code></td><td><code>PR_SET_DUMPABLE</code></td><td><code>PT_DENY_ATTACH</code></td><td>&mdash;</td><td>&mdash;</td></tr>
+            <tr><td><code>Secret_unix</code> descriptor I/O</td><td>yes</td><td>yes</td><td>yes</td><td>not built</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        On a freestanding target &mdash; solo5, and so MirageOS &mdash; the
+        payload, its zeroization and constant-time equality remain, and
+        everything below them in the table is gone: no OS entropy, no
+        page-backed tier, no fork policy.
+        <code>secret_platform.h</code> forces that profile from the target
+        compiler's own macros, so a build cannot switch on an OS feature that is
+        not there.
+      </p>
+
+      <p class="fine">
+        Where no OS entropy source exists, <code>Secret.random</code> raises
+        <code>Entropy_unavailable</code> until a generator is installed with
+        <code>Secret.set_entropy_source</code>; the callback fills a scratch
+        buffer that is wiped afterwards. A feature being compiled in does not
+        mean it will succeed at run time &mdash; <code>mlock</code> is bounded by
+        <code>RLIMIT_MEMLOCK</code> on every platform. That is what
+        <a href="#status"><code>status</code></a> is for.
+      </p>
+
+      <p>
+        The numbers behind the timing and leak claims are on the
+        <a href="benchmarks.html">benchmarks page</a>.
+      </p>
+    </main>
+
+    <footer>
+      <p>
+        <a href="usage.html">usage</a> &middot;
+        <a href="benchmarks.html">benchmarks</a> &middot;
+        <a href="https://github.com/thevilledev/ocaml-secret/blob/main/src/secret.mli">secret.mli</a>
+      </p>
+    </footer>
+  </body>
+</html>
