@@ -145,6 +145,15 @@ module Unsafe = struct
   let with_string_view t f = f (scoped_string_view t)
   let with_bytes_view t f = f (Bytes.unsafe_of_string (scoped_string_view t))
 
+  let init ?hardened n f =
+    let t = create ?hardened n in
+    (match f (Bytes.unsafe_of_string (scoped_string_view t)) with
+    | () -> ()
+    | exception e ->
+        destroy t;
+        raise e);
+    t
+
   type nonrec bigstring = bigstring
 
   let with_bigstring t f =
@@ -162,13 +171,17 @@ end
 (* ---- construction (continued) ---------------------------------------------------- *)
 
 let init ?hardened n f =
-  let t = create ?hardened n in
-  (match f (Bytes.unsafe_of_string (Unsafe.scoped_string_view t)) with
-  | () -> ()
-  | exception e ->
-      destroy t;
-      raise e);
-  t
+  Scratch.with_ n (fun b ->
+      f b;
+      let t = create ?hardened n in
+      match
+        check_rc "Secret.init"
+          (blit_from_string_c (Bytes.unsafe_to_string b) 0 t 0 n)
+      with
+      | () -> t
+      | exception e ->
+          destroy t;
+          raise e)
 
 let entropy_source : (bytes -> unit) option ref = ref None
 let set_entropy_source f = entropy_source := Some f
@@ -231,6 +244,16 @@ let with_secret ?hardened n f =
       destroy t;
       raise e
 
+let with_random ?hardened n f =
+  let t = random ?hardened n in
+  match f t with
+  | r ->
+      destroy t;
+      r
+  | exception e ->
+      destroy t;
+      raise e
+
 (* ---- inspection ------------------------------------------------------------------- *)
 
 (* Branch-free on the result: [r = 1] compiles to a compare + conditional
@@ -264,6 +287,16 @@ type status = {
   destroyed : bool;
 }
 
+type hardening_requirement =
+  [ `Page_backed
+  | `Guard_pages
+  | `Canary
+  | `Locked
+  | `No_core_dump
+  | `Wipe_on_fork ]
+
+exception Hardening_unavailable of hardening_requirement
+
 let status t =
   let f = status_c t in
   let requested = has f sf_hardened_req in
@@ -294,6 +327,25 @@ let status t =
     viewed = has f sf_viewed;
     destroyed = has f sf_destroyed;
   }
+
+let require_hardening requirements t =
+  let st = status t in
+  if st.destroyed then raise Destroyed;
+  let met = function
+    | `Page_backed -> st.page_backed
+    | `Guard_pages -> st.guard_pages
+    | `Canary -> st.canary
+    | `Locked -> st.lock = `Locked
+    | `No_core_dump -> st.no_core_dump = `Yes
+    | `Wipe_on_fork -> st.wipe_on_fork
+  in
+  match
+    List.find_opt (fun requirement -> not (met requirement)) requirements
+  with
+  | None -> t
+  | Some requirement ->
+      destroy t;
+      raise (Hardening_unavailable requirement)
 
 type capabilities = {
   hardened_tier : bool;
