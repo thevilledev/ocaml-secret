@@ -124,7 +124,7 @@
 
       <div class="notice">
         <p>
-          <strong>Experimental.</strong> The API may change before 1.0.
+          <strong>Experimental and unaudited.</strong> The API may change before 1.0.
           This library reduces the number of places a key can be read from; it
           is not a substitute for an HSM or a KMS when the threat model needs
           hardware-backed isolation.
@@ -134,8 +134,8 @@
       <table>
         <caption>Current state</caption>
         <tbody>
-          <tr><th scope="row">Release</th><td>0.1.0</td></tr>
-          <tr><th scope="row">OCaml</th><td>4.14 or newer, including 5.x</td></tr>
+          <tr><th scope="row">Release</th><td>0.1.0 (unreleased)</td></tr>
+          <tr><th scope="row">OCaml</th><td>4.14 and 5.0&ndash;5.5</td></tr>
           <tr><th scope="row">Tested platforms</th><td>Linux and macOS on every commit; musl and 32-bit weekly; Windows and solo5 best effort</td></tr>
           <tr><th scope="row">Runtime dependencies</th><td>none beyond the standard library</td></tr>
           <tr><th scope="row">License</th><td>ISC</td></tr>
@@ -172,7 +172,8 @@
       <dl>
         <dt><strong>Default</strong></dt>
         <dd>
-          <code>calloc</code> memory, zeroed on release and pooled for reuse.
+          <code>calloc</code> memory, zeroed on release, with unviewed blocks
+          pooled for reuse.
           About 75&nbsp;ns to
           <a href="benchmarks.html#allocation">create and destroy</a>. Use it for
           many small or short-lived keys.
@@ -188,7 +189,8 @@
       </dl>
 
       <p>
-        Every hardening feature is best effort and platform-dependent.
+        Hardening is disabled by default, and every hardening feature is best
+        effort and platform-dependent.
         <code>Secret.status</code> reports what a given value actually got, and
         <code>Secret.require_hardening</code> turns a missing protection into a
         raised exception rather than a silent downgrade. See

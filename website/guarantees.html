@@ -37,6 +37,15 @@
         reach entirely.
       </p>
 
+      <div class="notice">
+        <p>
+          <strong>Experimental and unaudited.</strong> This is a pre-1.0
+          implementation. Treat every hardening feature as defense in depth,
+          not as a replacement for process isolation or hardware-backed key
+          storage.
+        </p>
+      </div>
+
       <h2 id="gc">Why the heap is the problem</h2>
 
       <p>
@@ -92,16 +101,18 @@
           Polymorphic <code>compare</code> and <code>Marshal</code> raise
           <code>Invalid_argument</code>; <code>Hashtbl.hash</code> ignores the
           payload; <code>pp</code> prints <code>&lt;secret:32B&gt;</code>. Secret
-          bytes reach OCaml values only through functions whose names contain
-          <code>expose</code>, <code>unsafe</code> or <code>view</code>. That is
-          a greppable list.
+          bytes reach OCaml values only through documented scratch-buffer
+          callbacks and functions whose names contain <code>expose</code>,
+          <code>unsafe</code> or <code>view</code>.
         </dd>
 
         <dt><strong>Use after destruction raises.</strong></dt>
         <dd>
-          Every accessor raises <code>Secret.Destroyed</code> instead of
-          returning stale bytes or crashing. <code>destroy</code> is idempotent,
-          and <code>length</code> and <code>status</code> keep working.
+          Every accessor through the owner raises
+          <code>Secret.Destroyed</code> instead of returning stale bytes.
+          <code>destroy</code> is idempotent, and <code>length</code> and
+          <code>status</code> keep working. Unsafe views have their own lifetime
+          rules below.
         </dd>
       </dl>
 
@@ -140,6 +151,14 @@
           reported rather than assumed &mdash; see <a href="#status">status</a>.
         </li>
         <li>
+          Historical copies of a scratch buffer left by major-heap compaction.
+          Wiping the current buffer cannot reach an older moved-from copy.
+        </li>
+        <li>
+          Race safety for mutation, destruction, process-wide wiping, or
+          blocking I/O. Callers must synchronize these operations.
+        </li>
+        <li>
           Anything against a root user, <code>ptrace</code>, a cold-boot attack,
           or a compromised kernel or hypervisor.
         </li>
@@ -170,7 +189,7 @@
             <tr><td>Exit from a spawned domain</td><td>Yes.</td></tr>
             <tr><td><code>fork</code> child under <code>`Wipe_in_child</code></td><td>Yes, in the child.</td></tr>
             <tr><td><code>Unix._exit</code></td><td><strong>No.</strong> No handler runs.</td></tr>
-            <tr><td>Fatal signal</td><td><strong>No.</strong> Wipe from your own handler.</td></tr>
+            <tr><td>Fatal signal</td><td><strong>No.</strong> No safe library callback is possible.</td></tr>
             <tr><td>Runtime fatal error</td><td><strong>No.</strong></td></tr>
           </tbody>
         </table>
@@ -191,14 +210,12 @@
       </p>
 
       <p>
-        A wipe can also land while another domain is mid-operation. A safe
-        operation that overlaps it either completes before the wipe or raises
-        <code>Destroyed</code>; a write that lands in storage already retired by
-        the wipe is zeroized again before the call returns. Wiped storage is
-        released only when its owning handle is finalized, which is what keeps
-        those in-flight accesses memory-safe. Raw values handed out by
-        <code>Secret.Unsafe</code> sit outside this guarantee: see
-        <a href="#views">view lifetimes</a>.
+        An explicit <code>wipe_all</code> requires a quiescent process: join or
+        stop worker domains and finish blocking <code>Secret_unix</code> I/O
+        first. Concurrent reads of a live secret are supported, but all
+        mutation, destruction, and process-wide wiping require caller
+        synchronization. Concurrent repeated calls to <code>destroy</code> are
+        the exception and remain safe.
       </p>
 
       <h2 id="tiers">Two tiers</h2>
@@ -228,10 +245,12 @@
       </div>
 
       <p>
-        Both tiers pool released payload blocks by size class and reuse them
-        only for other secrets. A pooled block is zero and carries a valid OCaml
-        string header, which is what makes a stale view harmless rather than a
-        crash. Unviewed blocks above the pool's size limit go back to the OS.
+        Both tiers may pool released <em>unviewed</em> payload blocks by size
+        class and reuse them only after zeroization. Any allocation that has
+        produced an unscoped view is zeroized and permanently parked instead:
+        it is never reused or unmapped. This prevents cross-secret disclosure
+        at the cost of process-lifetime, potentially unbounded memory retention.
+        Unviewed blocks above the pool's size limit go back to the OS.
       </p>
 
       <p>
@@ -263,7 +282,7 @@
             <tr><td><code>no_core_dump</code></td><td><code>`Yes</code>, <code>`Unsupported</code>, or <code>`Not_requested</code>.</td></tr>
             <tr><td><code>wipe_on_fork</code></td><td><code>MADV_WIPEONFORK</code> is in effect for this mapping.</td></tr>
             <tr><td><code>viewed</code></td><td>An unscoped view was handed out at some point.</td></tr>
-            <tr><td><code>destroyed</code></td><td>The payload has been zeroized and released.</td></tr>
+            <tr><td><code>destroyed</code></td><td>The payload has been zeroized and released, pooled, or permanently parked.</td></tr>
           </tbody>
         </table>
       </div>
@@ -316,10 +335,12 @@
       <p>The rules that come with it:</p>
 
       <ul>
-        <li>A view is valid only while its owner is alive. After
-          <code>destroy</code> it reads as zeros.</li>
+        <li>Destruction zeroizes unscoped-view storage and permanently parks it,
+          so a stale view can never observe another secret. A retained mutable
+          view can still modify its own parked storage.</li>
         <li>Store an unscoped view only next to its owner, so the owner stays
-          reachable for as long as the view does.</li>
+          reachable for as long as the view does. Every unscoped view causes
+          permanent memory retention after destruction.</li>
         <li>A scoped view must not escape its callback. The bigstring view is
           revoked when the callback returns: its length becomes 0 and further
           access raises <code>Invalid_argument</code>. Sub-views made with
@@ -330,18 +351,17 @@
       </ul>
 
       <p>
-        A view that outlives its owner cannot crash the program: released blocks
-        are pooled for other secrets and are never handed back to the C
-        allocator or unmapped while a view could exist. What such a view can do
-        is read <em>another</em> secret. That is a bug in the calling code, and
-        it is why <code>status.viewed</code> exists.
+        Prefer scoped views. Their owner remains reachable throughout the
+        callback, including when the callback raises or forces collection. A
+        scoped view that escapes the callback is still a programming error:
+        its unmarked storage may later be released or reused.
       </p>
 
       <p>
-        Views are also outside the concurrency guarantee that ordinary
-        operations get. <code>Secret.equal</code> or <code>expose</code> racing
-        a <code>wipe_all</code> will raise <code>Destroyed</code>; a raw view
-        being read by another domain at that moment simply starts reading zeros.
+        View access must obey the same concurrency contract: concurrent reads
+        are supported, while mutation or destruction requires caller
+        synchronization. No scoped or unscoped view may be in use during
+        <code>wipe_all</code>.
       </p>
 
       <p>
@@ -351,8 +371,9 @@
         foreign pointer: comparison is by address and marshalling fails.
         <code>String.equal</code>, every <code>String</code> and
         <code>Bytes</code> function, and C stubs using <code>String_val</code>
-        behave identically on 4.14 and 5.x. Use <code>Secret.equal</code> for
-        contents, which is constant time on both.
+        behave identically on 4.14 and supported 5.0&ndash;5.5 releases. Use
+        <code>Secret.equal</code> for contents, which is constant time on every
+        supported compiler.
       </p>
 
       <h2 id="fork">Fork</h2>

@@ -7,6 +7,10 @@
     when the handle is garbage-collected, and at normal program exit
     ({!wipe_all} is registered with [Stdlib.at_exit]).
 
+    This is an experimental, unaudited pre-1.0 implementation. Its memory
+    hardening is defense in depth, not a substitute for process isolation or
+    hardware-backed key storage.
+
     {2 What this module guarantees}
 
     - The payload is never copied by the GC and is not reachable through
@@ -16,8 +20,9 @@
       cannot elide, on {!destroy}, on garbage collection of the handle and on
       normal exit, {i before} its memory is ever reused.
     - {!equal} runs in time that depends only on the lengths.
-    - Secret bytes reach OCaml values only through the functions of this module
-      whose names contain [expose], [unsafe] or [view]; grep for them.
+    - Secret bytes reach OCaml values only through documented {!Scratch}-based
+      construction or exposure callbacks and functions whose names contain
+      [expose], [unsafe] or [view].
 
     {2 What this module does not (and cannot) guarantee}
 
@@ -91,7 +96,8 @@ val init : ?hardened:bool -> int -> (bytes -> unit) -> t
     initialize it. The buffer is copied into the secret, then zeroized when [f]
     returns or raises. If [f] retains the buffer, it observes only zeroes after
     [init] returns. Use {!Unsafe.init} when a zero-copy initializer is required.
-*)
+    This is subject to the major-heap compaction limitation documented by
+    {!Scratch}. *)
 
 val with_secret : ?hardened:bool -> int -> (t -> 'a) -> 'a
 (** [with_secret n f] is [f (create n)]; the secret is destroyed when [f]
@@ -222,7 +228,8 @@ val expose : t -> (bytes -> 'a) -> 'a
     duplicates it) and zeroizes the buffer when [f] returns or raises. [f] must
     not retain the buffer. Anything [f] does with the bytes ([Bytes.to_string],
     [Buffer.add_bytes], passing them to a [string]-keyed API) creates copies
-    this module cannot wipe.
+    this module cannot wipe. Major-heap compaction can also leave a historical
+    copy as documented by {!Scratch}.
     @raise Destroyed *)
 
 val blit_to_bytes : t -> src_off:int -> bytes -> dst_off:int -> len:int -> unit
@@ -254,7 +261,7 @@ val unsafe_to_string : t -> string
     polymorphic [compare]/[=], [Hashtbl.hash] and [Marshal] treat a view as a
     foreign pointer (address comparison, [Marshal] fails). [String.equal], every
     [String]/[Bytes] function and C stubs using [String_val] work the same on
-    both 4.14 and 5.x. *)
+    4.14 and supported 5.0–5.5 releases. *)
 module Unsafe : sig
   val init : ?hardened:bool -> int -> (bytes -> unit) -> t
   (** Zero-copy variant of {!init}. The callback receives a mutable view of the
@@ -323,7 +330,8 @@ module Gc : sig
 end
 
 (** Process-wide hardening. Every feature reports its outcome; nothing is
-    silent. *)
+    silent. Apply process-global controls during single-threaded startup. In
+    particular, [scrub_env] must not race another environment access. *)
 module Process : sig
   type feature =
     [ `No_core_dump  (** [setrlimit(RLIMIT_CORE, 0)] *)
@@ -379,7 +387,8 @@ val set_fork_policy : [ `Keep | `Wipe_in_child ] -> unit
     of all secrets; memory locks are lost (see {!after_fork}). [`Wipe_in_child]:
     an [atfork] child handler zeroizes every secret in the child; on Linux, live
     and subsequently created hardened secrets also get [MADV_WIPEONFORK].
-    Switching back to [`Keep] revokes that advice. *)
+    Switching back to [`Keep] revokes that advice. Set the policy before
+    starting worker domains or forking. *)
 
 val after_fork : unit -> unit
 (** Call in a forked child to re-establish [mlock] on hardened secrets. *)

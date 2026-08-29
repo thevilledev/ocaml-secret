@@ -43,9 +43,10 @@
       <pre><code>opam pin add secret https://github.com/thevilledev/ocaml-secret.git</code></pre>
 
       <p>
-        OCaml 4.14 or newer is required. There are no runtime dependencies;
-        <code>dune-configurator</code> probes the platform at build time and the
-        C stubs fall back to portable code when a feature is missing.
+        OCaml 4.14 or a 5.0&ndash;5.5 release is required. There are no runtime
+        dependencies; <code>dune-configurator</code> probes the platform at
+        build time and the C stubs fall back to portable code when a feature is
+        missing.
       </p>
 
       <table>
@@ -108,8 +109,10 @@ let key =
 
       <p>
         <code>Secret.destroy</code> zeroizes the contents immediately and
-        releases the memory. It is idempotent, and every accessor afterwards
-        raises <code>Secret.Destroyed</code> rather than returning stale bytes.
+        releases or pools unviewed memory. Storage that has produced an
+        unscoped view is permanently parked instead. Destruction is idempotent,
+        and every accessor through the owner afterwards raises
+        <code>Secret.Destroyed</code>.
       </p>
 
       <pre><code>Secret.destroy key</code></pre>
@@ -136,8 +139,16 @@ let key =
         <code>Secret.wipe_all</code> is registered with <code>Stdlib.at_exit</code>
         at module initialisation, so it runs after every handler registered by
         code that uses the library. It does not run on <code>Unix._exit</code>,
-        on a signal, or after a runtime fatal error &mdash; call it from your own
-        signal handler if that matters.
+        on a signal, or after a runtime fatal error. Do not call it directly
+        from an asynchronous signal handler; arrange an orderly shutdown on a
+        normal execution path instead.
+      </p>
+
+      <p>
+        Concurrent reads are supported. Synchronize every mutation and
+        destruction with all other accesses, and quiesce worker domains and
+        blocking I/O before an explicit <code>wipe_all</code>. Concurrent
+        repeated destruction is safe.
       </p>
 
       <h2 id="use">Use the bytes</h2>
@@ -177,13 +188,20 @@ Secret.Unsafe.with_bigstring key (fun ba -&gt;
         <a href="guarantees.html#views">view lifetimes</a>.
       </p>
 
+      <p>
+        Unscoped-view storage is zeroized and permanently retained after
+        destruction, so it can never expose a later secret. This retention is
+        potentially unbounded; prefer scoped views.
+      </p>
+
       <h3 id="expose">Temporary copies</h3>
 
       <p>
         <code>Secret.expose</code> hands the callback a copy in a scratch buffer
         allocated directly in the major heap, so the minor collector never
         duplicates it, and wipes that buffer when the callback returns or
-        raises.
+        raises. Major-heap compaction can move the buffer and leave a historical
+        copy that the later wipe cannot reach, so this is best-effort hygiene.
       </p>
 
       <pre><code>let digest =
@@ -234,7 +252,8 @@ Secret.Unsafe.with_bigstring key (fun ba -&gt;
 
       <p>
         Every one of those is best effort and depends on the OS and on resource
-        limits. Nothing is assumed: ask what a value actually received.
+        limits. Hardening is disabled by default. Nothing is assumed: request
+        it per value and ask what the value actually received.
       </p>
 
       <pre><code>match (Secret.status root).lock with
@@ -278,14 +297,16 @@ Secret.Unsafe.with_bigstring key (fun ba -&gt;
         Linux, and denies debugger attachment on macOS. It returns what happened
         for each feature rather than raising. <code>Secret.Process.scrub_env</code>
         zeroizes and removes a variable from the process environment block after
-        you have read it.
+        you have read it. Apply these process-global controls during
+        single-threaded startup; environment scrubbing must not race another
+        environment access.
       </p>
 
       <h2 id="fork">Fork and exit</h2>
 
       <p>
         A forked child inherits copies of every secret, and memory locks are not
-        inherited. Choose a policy before you fork:
+        inherited. Choose a policy before starting worker domains or forking:
       </p>
 
       <pre><code>Secret.set_fork_policy `Wipe_in_child</code></pre>
@@ -314,11 +335,9 @@ Secret.Unsafe.with_bigstring key (fun ba -&gt;
 Secret_unix.read_exactly fd key ~off:0 ~len:32</code></pre>
 
       <p>
-        These read straight into the payload even while blocked: if
-        <code>Secret.wipe_all</code> runs during a blocked read, the bytes that
-        arrive after the wipe are zeroized again and
-        <code>Secret.Destroyed</code> is raised rather than left in retired
-        memory.
+        These read straight into the payload even while blocked. The caller
+        must not mutate or destroy the secret, or call
+        <code>Secret.wipe_all</code>, until the blocking operation returns.
       </p>
 
       <p>
@@ -349,9 +368,9 @@ if (secret_borrow_string_or_secret(v, &amp;p, &amp;len) != SECRET_OK)
 
       <p>
         A stub that releases the runtime lock around a blocking write should
-        finish with <code>secret_rewipe_if_destroyed</code>. If
-        <code>wipe_all</code> destroyed the secret while the write was in
-        flight, it zeroizes the retired payload again and returns 1.
+        finish with <code>secret_rewipe_if_destroyed</code> as defense in depth.
+        This check does not make overlapping destruction supported: keep the
+        value rooted and synchronize mutation and destruction.
       </p>
 
       <p>

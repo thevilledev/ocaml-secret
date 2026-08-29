@@ -4,6 +4,7 @@
 (generate_opam_files true)
 
 (source (github thevilledev/ocaml-secret))
+(documentation https://ville.dev/ocaml-secret/)
 (license ISC)
 (authors "Ville Vesilehto <ville@vesilehto.fi>")
 (maintainers "Ville Vesilehto <ville@vesilehto.fi>")
@@ -13,7 +14,8 @@
   "Zeroized secret memory outside the OCaml heap")
  (description
   "Secret.t stores fixed-length data outside the OCaml heap. It supports explicit
-zeroization, constant-time equality, optional page hardening, and zero-copy views.")
+zeroization, constant-time equality, optional page hardening, and zero-copy views.
+This experimental pre-1.0 implementation has not received an independent security audit.")
  (tags (security cryptography memory))
  (depends
   (ocaml (and (>= 4.14.0) (< 5.6)))
