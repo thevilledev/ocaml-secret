@@ -73,6 +73,13 @@ let () =
   if not (supported ()) then (
     print_endline "leak scan: unsupported platform, skipped";
     exit 0);
+  (* The census checks are calibrated against 64-bit OCaml heap layouts and
+     key-schedule lifetimes. The scanner itself works on 32-bit Linux, but the
+     expected stale-copy counts do not transfer: keep this a regression gate
+     only where its baselines are meaningful. *)
+  if Sys.word_size <> 64 then (
+    print_endline "leak scan: 64-bit calibration unavailable, skipped";
+    exit 0);
   let reference = Secret.random key_len in
   print_endline
     "Leak census: copies of a 32-byte AES-256 key (its 24-byte tail) in \
