@@ -75,10 +75,11 @@ jobs:
         name: Install and test from a clean source archive
         run: |
           set -eu
+          opam_switch=$(opam switch show)
           archive_dir=$(mktemp -d)
           git archive --format=tar HEAD | tar -xf - -C "$archive_dir"
           cd "$archive_dir"
-          opam install . --with-test --with-doc --yes
+          opam install . --switch="$opam_switch" --with-test --with-doc --yes
       - if: matrix.benchmarks
         name: Run constant-time regression harness
         run: opam exec -- dune exec bench/ct_equal.exe -- 2000 50
