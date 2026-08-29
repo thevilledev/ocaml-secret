@@ -190,6 +190,17 @@
         secrets.
       </p>
 
+      <p>
+        A wipe can also land while another domain is mid-operation. A safe
+        operation that overlaps it either completes before the wipe or raises
+        <code>Destroyed</code>; a write that lands in storage already retired by
+        the wipe is zeroized again before the call returns. Wiped storage is
+        released only when its owning handle is finalized, which is what keeps
+        those in-flight accesses memory-safe. Raw values handed out by
+        <code>Secret.Unsafe</code> sit outside this guarantee: see
+        <a href="#views">view lifetimes</a>.
+      </p>
+
       <h2 id="tiers">Two tiers</h2>
 
       <div class="table-scroll">
@@ -211,7 +222,7 @@
             <tr><td>Locked into RAM</td><td>&mdash;</td><td>Best effort, reported</td></tr>
             <tr><td>Excluded from core dumps</td><td>&mdash;</td><td>Best effort, reported</td></tr>
             <tr><td>Address space per secret</td><td>Payload plus 16 bytes</td><td>At least three pages</td></tr>
-            <tr><td>Cost</td><td><a href="benchmarks.html#allocation">~100&nbsp;ns</a></td><td><a href="benchmarks.html#allocation">~2&nbsp;&micro;s</a></td></tr>
+            <tr><td>Cost</td><td><a href="benchmarks.html#allocation">~75&nbsp;ns</a></td><td><a href="benchmarks.html#allocation">~1.6&nbsp;&micro;s</a></td></tr>
           </tbody>
         </table>
       </div>
@@ -274,6 +285,17 @@
       </div>
 
       <p>
+        Reporting is the default, but it is not the only option.
+        <code>require_hardening</code> takes a list of
+        <code>`Page_backed</code>, <code>`Guard_pages</code>,
+        <code>`Canary</code>, <code>`Locked</code>, <code>`No_core_dump</code>
+        and <code>`Wipe_on_fork</code>, and destroys the secret before raising
+        <code>Hardening_unavailable</code> with the first requirement it could
+        not meet. A key that did not get the protection it asked for never
+        reaches the caller.
+      </p>
+
+      <p>
         <code>Secret.capabilities ()</code> answers the same questions for the
         build and the platform as a whole, before any secret exists. It also
         reports the page size and the name of the zeroization primitive that was
@@ -313,6 +335,13 @@
         allocator or unmapped while a view could exist. What such a view can do
         is read <em>another</em> secret. That is a bug in the calling code, and
         it is why <code>status.viewed</code> exists.
+      </p>
+
+      <p>
+        Views are also outside the concurrency guarantee that ordinary
+        operations get. <code>Secret.equal</code> or <code>expose</code> racing
+        a <code>wipe_all</code> will raise <code>Destroyed</code>; a raw view
+        being read by another domain at that moment simply starts reading zeros.
       </p>
 
       <p>

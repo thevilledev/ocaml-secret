@@ -62,8 +62,8 @@
       <h2 id="create">Create a secret</h2>
 
       <p>
-        Prefer a constructor that fills the memory in place. Every one of these
-        avoids an intermediate OCaml string.
+        Prefer a constructor that gets the bytes into secret memory without an
+        intermediate OCaml string. Every one of these does, except the last.
       </p>
 
       <table>
@@ -73,7 +73,8 @@
         </thead>
         <tbody>
           <tr><td><code>Secret.random n</code></td><td>OS entropy, written straight into the payload.</td></tr>
-          <tr><td><code>Secret.init n f</code></td><td>A KDF, PRNG or decoder writing through a mutable view.</td></tr>
+          <tr><td><code>Secret.init n f</code></td><td>A KDF, PRNG or decoder filling a scratch buffer that is copied in and then wiped.</td></tr>
+          <tr><td><code>Secret.Unsafe.init n f</code></td><td>The same, but the producer writes into the secret memory itself.</td></tr>
           <tr><td><code>Secret_unix.read_file path</code></td><td>A file, read with <code>read(2)</code> into the payload.</td></tr>
           <tr><td><code>Secret.of_bytes ~wipe_source:true b</code></td><td>An existing buffer, zeroized afterwards.</td></tr>
           <tr><td><code>Secret.of_string s</code></td><td>An OCaml string, which <em>cannot</em> be wiped. Last resort.</td></tr>
@@ -82,10 +83,20 @@
 
       <pre><code>let key = Secret.random 32
 
-(* or let a producer fill the payload in place *)
+(* or hand a producer a buffer to fill *)
 let key =
   Secret.init 32 (fun buf -&gt;
       Mirage_crypto_rng.generate_into buf (Bytes.length buf))</code></pre>
+
+      <p>
+        <code>init</code> passes a temporary scratch buffer, copies it into the
+        secret, and wipes it when the callback returns or raises; a callback
+        that retains the buffer sees only zeros afterwards. Reach for
+        <code>Secret.Unsafe.init</code> only when the producer must write into
+        the payload with no intermediate copy at all &mdash; it hands out a
+        mutable view of the secret memory, with the lifetime rules that come
+        with any <a href="#views">view</a>.
+      </p>
 
       <p>
         <code>of_string</code> is honest about its cost: the argument stays in
@@ -106,7 +117,15 @@ let key =
       <p>
         Use <code>Secret.with_secret</code> when the lifetime is a scope; it
         destroys the secret whether the body returns or raises.
+        <code>Secret.with_random</code> is the same thing for a freshly
+        generated key, and is the shortest correct way to use one:
       </p>
+
+      <pre><code>let aes =
+  Secret.with_random 32 (fun key -&gt;
+    Secret.Unsafe.with_string_view key Mirage_crypto.AES.GCM.of_secret)</code></pre>
+
+      <p><code>with_secret</code> is the same scope when the bytes come from elsewhere:</p>
 
       <pre><code>Secret.with_secret 32 (fun k -&gt;
     Secret_unix.read_exactly fd k ~off:0 ~len:32;
@@ -225,6 +244,25 @@ Secret.Unsafe.with_bigstring key (fun ba -&gt;
 | `Unsupported | `Not_requested -&gt; ()</code></pre>
 
       <p>
+        When a missing protection should stop the program rather than warn it,
+        <code>require_hardening</code> checks the list and
+        <em>destroys the secret</em> before raising
+        <code>Hardening_unavailable</code>, so a half-protected key can never
+        escape into the rest of the program:
+      </p>
+
+      <pre><code>let root =
+  Secret.random ~hardened:true 32
+  |&gt; Secret.require_hardening [ `Page_backed; `Locked ]</code></pre>
+
+      <p>
+        The requirements are <code>`Page_backed</code>,
+        <code>`Guard_pages</code>, <code>`Canary</code>, <code>`Locked</code>,
+        <code>`No_core_dump</code> and <code>`Wipe_on_fork</code>. The exception
+        carries the first one that was not met.
+      </p>
+
+      <p>
         <code>Secret.capabilities ()</code> answers the same question for the
         build and platform as a whole, before any secret exists. The full
         meaning of each field is in
@@ -276,6 +314,14 @@ Secret.Unsafe.with_bigstring key (fun ba -&gt;
 Secret_unix.read_exactly fd key ~off:0 ~len:32</code></pre>
 
       <p>
+        These read straight into the payload even while blocked: if
+        <code>Secret.wipe_all</code> runs during a blocked read, the bytes that
+        arrive after the wipe are zeroized again and
+        <code>Secret.Destroyed</code> is raised rather than left in retired
+        memory.
+      </p>
+
+      <p>
         The kernel page cache still holds its own copy of any file that was
         read. That is outside this library's reach.
       </p>
@@ -299,6 +345,13 @@ if (secret_borrow_string_or_secret(v, &amp;p, &amp;len) != SECRET_OK)
         The pointer is stable while the value is reachable and undestroyed.
         Never hold it across an OCaml allocation that could make the value
         unreachable.
+      </p>
+
+      <p>
+        A stub that releases the runtime lock around a blocking write should
+        finish with <code>secret_rewipe_if_destroyed</code>. If
+        <code>wipe_all</code> destroyed the secret while the write was in
+        flight, it zeroizes the retired payload again and returns 1.
       </p>
 
       <p>

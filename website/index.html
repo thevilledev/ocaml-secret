@@ -40,11 +40,44 @@
     </nav>
 
     <main id="content">
-      <pre class="plain banner" aria-hidden="true">
- OCaml heap                   outside the OCaml heap
-  Secret.t  ---- owns ----&gt;   [guard][hdr|key bytes][guard]
-                                          |
-  destroy / exit / GC  ------- zeroize ---+</pre>
+      <svg class="banner" role="img" viewBox="0 0 610 160" xmlns="http://www.w3.org/2000/svg">
+        <title>A Secret.t handle inside the OCaml heap owns a payload outside it: guard pages around an OCaml string header and the key bytes. Destroy, exit and collection all zeroize the key bytes.</title>
+        <defs>
+          <marker id="secret-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-family="ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" fill="currentColor">
+          <text x="0" y="11" font-size="12">OCaml heap</text>
+          <text x="250" y="11" font-size="12">outside the OCaml heap</text>
+          <line x1="239" y1="0" x2="239" y2="140" stroke="currentColor" stroke-dasharray="2 4" opacity="0.45"/>
+
+          <rect x="0.5" y="33.5" width="110" height="34" fill="none" stroke="currentColor"/>
+          <text x="55.5" y="55" font-size="14" text-anchor="middle">Secret.t</text>
+
+          <text x="178" y="44" font-size="12" text-anchor="middle">owns</text>
+          <line x1="112" y1="50.5" x2="246" y2="50.5" stroke="currentColor" marker-end="url(#secret-arrow)"/>
+
+          <rect x="250.5" y="33.5" width="50" height="34" fill="currentColor" fill-opacity="0.1" stroke="currentColor" stroke-dasharray="3 2"/>
+          <rect x="300.5" y="33.5" width="44" height="34" fill="none" stroke="currentColor"/>
+          <rect x="344.5" y="33.5" width="200" height="34" fill="none" stroke="currentColor"/>
+          <rect x="544.5" y="33.5" width="50" height="34" fill="currentColor" fill-opacity="0.1" stroke="currentColor" stroke-dasharray="3 2"/>
+
+          <text x="275.5" y="55" font-size="11" text-anchor="middle">guard</text>
+          <text x="322.5" y="55" font-size="11" text-anchor="middle">hdr</text>
+          <text x="444.5" y="55" font-size="14" text-anchor="middle">key bytes</text>
+          <text x="569.5" y="55" font-size="11" text-anchor="middle">guard</text>
+
+          <path d="M 322.5 68 L 322.5 80" fill="none" stroke="currentColor" opacity="0.5"/>
+          <text x="322.5" y="92" font-size="10" text-anchor="middle" opacity="0.7">OCaml string header</text>
+
+          <text x="0" y="132" font-size="12">destroy / exit / GC</text>
+          <text x="300" y="120" font-size="12" text-anchor="middle">zeroize</text>
+          <path d="M 145 128 L 444.5 128 L 444.5 72" fill="none" stroke="currentColor" marker-end="url(#secret-arrow)"/>
+
+          <text x="594.5" y="152" font-size="10" text-anchor="end" opacity="0.7">dashed: hardened tier only</text>
+        </g>
+      </svg>
       <h1>secret</h1>
 
       <p>
@@ -59,7 +92,7 @@
         <li>The payload is unreachable through polymorphic <code>compare</code>, <code>Hashtbl.hash</code> and <code>Marshal</code>; printing is redacted.</li>
         <li><code>equal</code> compares contents in time that depends only on the length.</li>
         <li>Zero-copy views hand existing <code>string</code>- and <code>bytes</code>-based APIs the secret memory itself.</li>
-        <li>An optional hardened tier adds guard pages, a canary, page locking, and core-dump exclusion, and reports per value what it actually got.</li>
+        <li>An optional hardened tier adds guard pages, a canary, page locking, and core-dump exclusion, and reports per value what it actually got &mdash; or fails closed on request.</li>
       </ul>
 
       <div class="table-scroll">
@@ -119,22 +152,19 @@
  (name main)
  (libraries secret))</code></pre>
 
-      <p>Generate a key, use it, and destroy it:</p>
+      <p>Generate a key, use it, and let the scope destroy it:</p>
 
-      <pre><code>let () =
-  let key = Secret.random 32 in
-  let view = Secret.Unsafe.string_view key in
-  let aes = Mirage_crypto.AES.GCM.of_secret view in
-  (* ... use [aes] while [key] is alive ... *)
-  Secret.destroy key</code></pre>
+      <pre><code>let aes =
+  Secret.with_random 32 (fun key -&gt;
+    Secret.Unsafe.with_string_view key Mirage_crypto.AES.GCM.of_secret)</code></pre>
 
       <p>
-        <code>Secret.random</code> writes OS entropy straight into the secret
-        memory; no copy passes through the OCaml heap.
-        <code>Secret.Unsafe.string_view</code> hands mirage-crypto an ordinary
+        <code>with_random</code> writes OS entropy straight into the secret
+        memory &mdash; no copy passes through the OCaml heap &mdash; and
+        destroys the secret when the function returns or raises.
+        <code>with_string_view</code> hands mirage-crypto an ordinary
         <code>string</code> whose bytes <em>are</em> that memory, so no copy is
-        made on the way in either. <code>Secret.destroy</code> zeroizes it
-        immediately instead of waiting for the collector.
+        made on the way in either. Nothing here waits for the collector.
       </p>
 
       <h2 id="tiers">Choose a tier</h2>
@@ -143,7 +173,7 @@
         <dt><strong>Default</strong></dt>
         <dd>
           <code>calloc</code> memory, zeroed on release and pooled for reuse.
-          About 100&nbsp;ns to
+          About 75&nbsp;ns to
           <a href="benchmarks.html#allocation">create and destroy</a>. Use it for
           many small or short-lived keys.
         </dd>
@@ -152,15 +182,16 @@
           <code>Secret.create ~hardened:true</code> gives the payload its own
           mapping with guard pages on both sides, a canary, <code>mlock</code>,
           and exclusion from core dumps. Costs at least three pages of address
-          space and roughly 2&nbsp;&micro;s per secret. Use it for long-lived
-          root keys.
+          space and roughly 1.6&nbsp;&micro;s per secret. Use it for
+          long-lived root keys.
         </dd>
       </dl>
 
       <p>
         Every hardening feature is best effort and platform-dependent.
-        <code>Secret.status</code> reports what a given value actually got, so
-        the outcome is never assumed. See
+        <code>Secret.status</code> reports what a given value actually got, and
+        <code>Secret.require_hardening</code> turns a missing protection into a
+        raised exception rather than a silent downgrade. See
         <a href="guarantees.html">what is and is not guaranteed</a>, or start
         with <a href="usage.html">usage</a>.
       </p>
