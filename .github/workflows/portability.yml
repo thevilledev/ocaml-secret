@@ -36,6 +36,7 @@ jobs:
       - run: |
           docker run --rm -v "$PWD:/src" ocaml/opam:alpine-ocaml-5.4 sh -ec '
             sudo cp -r /src /work && sudo chown -R opam /work && cd /work
+            export OPAMJOBS=2
             opam install . --deps-only --with-test -y
             opam exec -- dune build @install @runtest'
 
@@ -58,7 +59,7 @@ jobs:
               gcc musl-dev make patch tar curl rsync git bash opam
             cp -r /src /work && cd /work && rm -rf _build
             test "$(ocaml -e "print_int Sys.word_size")" = 32
-            export OPAMYES=1 OPAMROOT=/opamroot
+            export OPAMJOBS=2 OPAMYES=1 OPAMROOT=/opamroot
             opam init --disable-sandboxing --bare
             opam switch create sys --packages=ocaml-system
             eval $(opam env --switch=sys)
