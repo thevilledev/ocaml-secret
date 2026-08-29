@@ -36,9 +36,10 @@
 
 type t
 (** A secret. Values of this type cannot be compared, hashed or marshalled. A
-    [t] may be used from any domain. Calling {!destroy} concurrently with
-    another operation on the same [t] from another domain is a programming error
-    (as it is for [Bytes]); calling {!destroy} twice is always safe. *)
+    [t] may be used from any domain. Concurrent read-only operations are safe.
+    Callers must synchronize every mutation with all other accesses to that
+    [t], and must not call {!destroy} concurrently with an operation on it (as
+    for [Bytes]). Calling {!destroy} concurrently more than once is safe. *)
 
 exception Destroyed
 (** Raised by every operation that reads or writes a secret after {!destroy} (or
@@ -205,9 +206,9 @@ val sub : ?hardened:bool -> t -> off:int -> len:int -> t
 val copy : ?hardened:bool -> t -> t
 
 val destroy : t -> unit
-(** Zeroizes the contents now and releases the memory (the memory is pooled for
-    other secrets in a bounded reuse cache, never handed back to the C allocator
-    while an unscoped view could exist). Idempotent. After this every accessor
+(** Zeroizes the contents now and releases or pools unviewed memory. Memory
+    that has produced an unscoped view is instead permanently retained and is
+    never reused. Idempotent. After this every accessor through the owner
     raises {!Destroyed}. Destroy secrets as soon as they are no longer needed:
     relying on the GC delays the wipe until the handle is collected. *)
 
@@ -240,14 +241,14 @@ val unsafe_to_string : t -> string
     existing API that takes a [string] or [bytes] — including C stubs using
     [String_val] — can therefore work on secret memory without a copy.
 
-    Rules: a view is valid only while its owner [t] is alive; after {!destroy}
-    it reads as zeros. Store an unscoped view only next to its owner so the
-    owner stays reachable. The bytes of a view that escapes its owner's lifetime
-    are never unmapped or given to the C allocator (they may be reused for
-    another secret), so a stale view cannot crash the program, but it could
-    observe another secret: that is a bug in the caller. Views are exempt from
-    none of the copy hazards of ordinary strings ([String.sub], [^], [compare],
-    [Marshal] all copy).
+    Rules: a view is valid only while its owner [t] is alive. Destruction
+    zeroizes its storage, which is then permanently retained: a stale view can
+    never observe a later secret. Retaining an unscoped view therefore leaks
+    its allocation for the rest of the process, and a retained mutable view can
+    modify that parked storage. Prefer scoped views, do not let them escape
+    their callback, and store an unscoped view only next to its owner. Views are
+    exempt from none of the copy hazards of ordinary strings ([String.sub],
+    [^], [compare], [Marshal] all copy).
 
     OCaml 4.14: the 4.x runtime classifies out-of-heap blocks by page table, so
     polymorphic [compare]/[=], [Hashtbl.hash] and [Marshal] treat a view as a
@@ -260,8 +261,8 @@ module Unsafe : sig
       new secret's memory. It must fill the view synchronously and must not
       retain it. The secret is destroyed if the callback raises.
 
-      Retaining the view is a memory-safety error: after the owner is destroyed
-      the view may become invalid or observe a later pooled secret. *)
+      Retaining the scoped view is a programming error: after the callback
+      returns its storage may be released or reused. *)
 
   val string_view : t -> string
   (** Zero-copy [string] view. Marks [t] as viewed (see {!val-status}).
@@ -272,7 +273,8 @@ module Unsafe : sig
       @raise Destroyed *)
 
   val with_string_view : t -> (string -> 'a) -> 'a
-  (** Scoped variant; the view must not escape [f]. *)
+  (** Scoped variant. The owner remains alive throughout [f]; the view must not
+      escape [f]. *)
 
   val with_bytes_view : t -> (bytes -> 'a) -> 'a
 
@@ -287,12 +289,13 @@ module Unsafe : sig
       The secret must not be destroyed during [f]. *)
 end
 
-(** Scratch buffers allocated directly in the major heap. *)
+(** Best-effort scratch buffers allocated directly in the major heap. *)
 module Scratch : sig
   val create : int -> bytes
   (** A zero-filled [bytes] allocated directly in the major heap regardless of
-      its size, so it is never copied by a minor collection (only an explicit
-      [Gc.compact] can move it). Wipe it with {!wipe} before dropping it. *)
+      its size, so it is never copied by a minor collection. Major-heap
+      compaction may move it and leave a historical copy that {!wipe} cannot
+      reach. Wipe the current buffer with {!wipe} before dropping it. *)
 
   val wipe : bytes -> unit
   (** Zeroizes any [bytes] with the platform's explicit zeroization primitive.
@@ -352,12 +355,11 @@ val wipe_all : unit -> unit
 (** Destroys every live secret in the process. Registered with [Stdlib.at_exit]
     at module initialisation, so it runs after all handlers registered later
     (i.e. after every handler of code that uses this module). Does not run on
-    [Unix._exit], signals or runtime fatal errors; call it from your own signal
-    handler if needed. Safe operations that overlap the wipe either complete
-    before it or raise {!Destroyed}; writes into retired storage are zeroized
-    again before returning. To keep in-flight accesses memory-safe, wiped
-    storage is released when its owning handle is finalized. Raw values from
-    {!Unsafe} are outside this concurrency guarantee.
+    [Unix._exit], signals or runtime fatal errors. Callers must ensure that no
+    secret operation, scoped or unscoped view access, or blocking
+    [Secret_unix] I/O is in flight. In particular, quiesce worker domains before
+    an explicit process-wide wipe. Wiped storage is released when its owning
+    handle is finalized.
 *)
 
 val live_count : unit -> int
@@ -371,7 +373,7 @@ val set_entropy_source : (bytes -> unit) -> unit
     [false] (MirageOS). The callback must fill the whole buffer, which is a
     {!Scratch} buffer wiped afterwards, e.g.
     [set_entropy_source (fun b -> Mirage_crypto_rng.generate_into b
-     (Bytes.length b))]. *)
+     (Bytes.length b))]. Replacement is atomic across domains. *)
 
 val set_fork_policy : [ `Keep | `Wipe_in_child ] -> unit
 (** POSIX only (no-op elsewhere). [`Keep] (default): the child inherits copies

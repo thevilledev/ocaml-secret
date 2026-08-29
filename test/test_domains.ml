@@ -1,5 +1,5 @@
-(* Multi-domain use: create/equal/destroy across domains, cross-domain
-   finalization, concurrent double destroy, wipe_all under allocation. *)
+(* Multi-domain use: concurrent reads, independent create/destroy traffic,
+   cross-domain finalization, and concurrent double destroy. *)
 
 let worker n () =
   for i = 1 to n do
@@ -50,38 +50,34 @@ let test_concurrent_double_destroy () =
   Domain.join d2;
   Array.iter (fun s -> assert (Secret.is_destroyed s)) secrets
 
-let test_wipe_all_under_allocation () =
-  let stop = Atomic.make false in
-  let errors = Atomic.make 0 in
-  let zeroish s =
-    (* a read that overlaps a wipe may observe a prefix of the contents
-       followed by zeros; anything else is corruption *)
-    let n = String.length s in
-    n = 6
-    &&
-    let rec ok i =
-      i >= n || if s.[i] = "racing".[i] then ok (i + 1) else zeros i
-    and zeros i = i >= n || (s.[i] = '\000' && zeros (i + 1)) in
-    ok 0
-  in
-  let allocator () =
-    while not (Atomic.get stop) do
-      match
-        let t = Secret.of_string "racing" in
-        Secret.unsafe_to_string t
-      with
-      | s when zeroish s -> ()
-      | _ -> Atomic.incr errors
-      | exception Secret.Destroyed -> ()
+let test_concurrent_reads () =
+  let secret = Secret.of_string "shared read-only secret" in
+  let copy = Secret.copy secret in
+  let reader () =
+    for _ = 1 to 20_000 do
+      assert (Secret.equal secret copy);
+      assert (Secret.equal_string secret "shared read-only secret");
+      assert (Secret.unsafe_to_string secret = "shared read-only secret")
     done
   in
-  let ds = List.init 3 (fun _ -> Domain.spawn allocator) in
-  for _ = 1 to 50 do
-    Secret.wipe_all ()
-  done;
-  Atomic.set stop true;
-  List.iter Domain.join ds;
-  Alcotest.(check int) "no corruption" 0 (Atomic.get errors)
+  let readers = List.init 4 (fun _ -> Domain.spawn reader) in
+  List.iter Domain.join readers;
+  Secret.destroy secret;
+  Secret.destroy copy
+
+let test_concurrent_entropy_source_updates () =
+  let setter byte () =
+    for _ = 1 to 20_000 do
+      Secret.set_entropy_source (fun buffer ->
+          Bytes.fill buffer 0 (Bytes.length buffer) byte)
+    done
+  in
+  let setters =
+    [ Domain.spawn (setter 'a'); Domain.spawn (setter 'b');
+      Domain.spawn (setter 'c'); Domain.spawn (setter 'd') ]
+  in
+  List.iter Domain.join setters;
+  Secret.set_entropy_source (fun buffer -> Bytes.fill buffer 0 (Bytes.length buffer) 'r')
 
 let () =
   Alcotest.run "secret-domains"
@@ -93,9 +89,10 @@ let () =
           Alcotest.test_case "parallel workers" `Quick test_parallel_workers;
           Alcotest.test_case "cross-domain finalization" `Quick
             test_cross_domain_finalization;
+          Alcotest.test_case "concurrent reads" `Quick test_concurrent_reads;
           Alcotest.test_case "concurrent double destroy" `Quick
             test_concurrent_double_destroy;
-          Alcotest.test_case "wipe_all under allocation" `Quick
-            test_wipe_all_under_allocation;
+          Alcotest.test_case "concurrent entropy source updates" `Quick
+            test_concurrent_entropy_source_updates;
         ] );
     ]
