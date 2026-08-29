@@ -37,9 +37,9 @@
 type t
 (** A secret. Values of this type cannot be compared, hashed or marshalled. A
     [t] may be used from any domain. Concurrent read-only operations are safe.
-    Callers must synchronize every mutation with all other accesses to that
-    [t], and must not call {!destroy} concurrently with an operation on it (as
-    for [Bytes]). Calling {!destroy} concurrently more than once is safe. *)
+    Callers must synchronize every mutation with all other accesses to that [t],
+    and must not call {!destroy} concurrently with an operation on it (as for
+    [Bytes]). Calling {!destroy} concurrently more than once is safe. *)
 
 exception Destroyed
 (** Raised by every operation that reads or writes a secret after {!destroy} (or
@@ -206,11 +206,11 @@ val sub : ?hardened:bool -> t -> off:int -> len:int -> t
 val copy : ?hardened:bool -> t -> t
 
 val destroy : t -> unit
-(** Zeroizes the contents now and releases or pools unviewed memory. Memory
-    that has produced an unscoped view is instead permanently retained and is
-    never reused. Idempotent. After this every accessor through the owner
-    raises {!Destroyed}. Destroy secrets as soon as they are no longer needed:
-    relying on the GC delays the wipe until the handle is collected. *)
+(** Zeroizes the contents now and releases or pools unviewed memory. Memory that
+    has produced an unscoped view is instead permanently retained and is never
+    reused. Idempotent. After this every accessor through the owner raises
+    {!Destroyed}. Destroy secrets as soon as they are no longer needed: relying
+    on the GC delays the wipe until the handle is collected. *)
 
 (** {1 Controlled exposure}
 
@@ -243,12 +243,12 @@ val unsafe_to_string : t -> string
 
     Rules: a view is valid only while its owner [t] is alive. Destruction
     zeroizes its storage, which is then permanently retained: a stale view can
-    never observe a later secret. Retaining an unscoped view therefore leaks
-    its allocation for the rest of the process, and a retained mutable view can
+    never observe a later secret. Retaining an unscoped view therefore leaks its
+    allocation for the rest of the process, and a retained mutable view can
     modify that parked storage. Prefer scoped views, do not let them escape
     their callback, and store an unscoped view only next to its owner. Views are
-    exempt from none of the copy hazards of ordinary strings ([String.sub],
-    [^], [compare], [Marshal] all copy).
+    exempt from none of the copy hazards of ordinary strings ([String.sub], [^],
+    [compare], [Marshal] all copy).
 
     OCaml 4.14: the 4.x runtime classifies out-of-heap blocks by page table, so
     polymorphic [compare]/[=], [Hashtbl.hash] and [Marshal] treat a view as a
@@ -356,11 +356,10 @@ val wipe_all : unit -> unit
     at module initialisation, so it runs after all handlers registered later
     (i.e. after every handler of code that uses this module). Does not run on
     [Unix._exit], signals or runtime fatal errors. Callers must ensure that no
-    secret operation, scoped or unscoped view access, or blocking
-    [Secret_unix] I/O is in flight. In particular, quiesce worker domains before
-    an explicit process-wide wipe. Wiped storage is released when its owning
-    handle is finalized.
-*)
+    secret operation, scoped or unscoped view access, or blocking [Secret_unix]
+    I/O is in flight. In particular, quiesce worker domains before an explicit
+    process-wide wipe. Wiped storage is released when its owning handle is
+    finalized. *)
 
 val live_count : unit -> int
 (** Number of allocated handles not yet finalized (diagnostics). *)

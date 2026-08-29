@@ -16,7 +16,6 @@
 zeroization, constant-time equality, optional page hardening, and zero-copy views.")
  (tags (security cryptography memory))
  (depends
-  (ocaml (>= 4.14.0))
+  (ocaml (and (>= 4.14.0) (< 5.6)))
   dune-configurator
-  (alcotest (and :with-test (>= 1.7.0)))
-  (mirage-crypto (and :with-test (>= 2.0.0)))))
+  (alcotest (and :with-test (>= 1.7.0)))))

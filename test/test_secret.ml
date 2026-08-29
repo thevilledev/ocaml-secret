@@ -205,10 +205,9 @@ let test_scoped_view_lifetime () =
   Secret.Unsafe.with_bigstring (s_of "bigarray owner") (fun view ->
       Gc.full_major ();
       Gc.compact ();
-      Alcotest.(check int) "bigarray owner retained" 14
-        (Bigarray.Array1.dim view);
-      Alcotest.(check char) "bigarray contents" 'b'
-        (Bigarray.Array1.get view 0));
+      Alcotest.(check int)
+        "bigarray owner retained" 14 (Bigarray.Array1.dim view);
+      Alcotest.(check char) "bigarray contents" 'b' (Bigarray.Array1.get view 0));
   let escaped = ref None in
   (match
      Secret.Unsafe.with_bigstring (s_of "exception owner") (fun view ->
@@ -216,22 +215,23 @@ let test_scoped_view_lifetime () =
          Gc.full_major ();
          Gc.compact ();
          failwith "callback")
-  with
+   with
   | _ -> Alcotest.fail "expected callback exception"
   | exception Failure message ->
       Alcotest.(check string) "callback exception" "callback" message);
   let escaped = Option.get !escaped in
-  Alcotest.(check int) "exception revokes bigarray" 0
+  Alcotest.(check int)
+    "exception revokes bigarray" 0
     (Bigarray.Array1.dim escaped);
-  (match
-     Secret.Unsafe.with_string_view (s_of "raise owner") (fun view ->
-         Gc.full_major ();
-         Gc.compact ();
-         Alcotest.(check string) "owner retained before raise" "raise owner" view;
-         raise Exit)
-   with
+  match
+    Secret.Unsafe.with_string_view (s_of "raise owner") (fun view ->
+        Gc.full_major ();
+        Gc.compact ();
+        Alcotest.(check string) "owner retained before raise" "raise owner" view;
+        raise Exit)
+  with
   | _ -> Alcotest.fail "expected Exit"
-  | exception Exit -> ())
+  | exception Exit -> ()
 
 let test_unscoped_view_never_reused () =
   let t = s_of "parked-secret" in
@@ -239,15 +239,13 @@ let test_unscoped_view_never_reused () =
   let pooled_before_destroy = Secret.pool_count () in
   Secret.destroy t;
   Alcotest.(check int)
-    "viewed allocation not pooled" pooled_before_destroy
-    (Secret.pool_count ());
+    "viewed allocation not pooled" pooled_before_destroy (Secret.pool_count ());
   for _ = 1 to 1_000 do
     let replacement = Secret.create 13 in
     Secret.fill replacement 'x';
     Secret.destroy replacement
   done;
-  Alcotest.(check string)
-    "stale view never reused" (String.make 13 '\000') view
+  Alcotest.(check string) "stale view never reused" (String.make 13 '\000') view
 
 let test_bigstring_view () =
   let t = s_of "bigstring" in

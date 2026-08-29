@@ -20,5 +20,10 @@ allocated by the receiving library. A promoted schedule survives
 Run the census with:
 
 ```sh
-dune exec test/leak_scan.exe
+opam install mirage-crypto
+SECRET_CENSUS=true dune build @census
 ```
+
+It is intentionally excluded from the package's normal `with-test`
+dependencies because its expectations describe a particular cryptographic
+implementation and allocator, not the `Secret` API's functional correctness.

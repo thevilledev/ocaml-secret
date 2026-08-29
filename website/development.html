@@ -69,26 +69,26 @@ Fifty-three alcotest cases across nine suites, plus two standalone
             <tr><th scope="col">Suite</th><th scope="col" class="n">Cases</th><th scope="col">Covers</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>test_secret</code></td><td class="n">24</td><td>The API surface: construction, scoped constructors, blits, exposure, views, both tiers, required hardening, pool reuse and size classes, scratch buffers, capabilities, process hardening.</td></tr>
+            <tr><td><code>test_secret</code></td><td class="n">26</td><td>The API surface: construction, scoped constructors, blits, exposure, scoped-view liveness, permanent unscoped-view isolation, both tiers, required hardening, pool reuse and size classes, scratch buffers, capabilities, process hardening.</td></tr>
             <tr><td><code>test_atexit</code></td><td class="n">7</td><td>Wipe on normal exit, <code>exit n</code>, an uncaught exception and exit from a domain; ordering against user <code>at_exit</code> handlers; the documented <code>Unix._exit</code> gap. Each runs a child process.</td></tr>
             <tr><td><code>test_gc</code></td><td class="n">6</td><td>Survival across minor collection and compaction, finalizer release and zeroing, GC pressure accounting, minor-heap scrubbing.</td></tr>
-            <tr><td><code>test_domains</code></td><td class="n">5</td><td>Parallel creation, cross-domain finalization, concurrent double destroy, <code>wipe_all</code> under allocation. OCaml 5 only.</td></tr>
+            <tr><td><code>test_domains</code></td><td class="n">6</td><td>Parallel creation, concurrent reads, atomic entropy-source replacement, cross-domain finalization, and concurrent double destroy. OCaml 5 only.</td></tr>
             <tr><td><code>test_guard</code></td><td class="n">4</td><td>Overflow and underflow hitting a guard page, canary corruption aborting, in-bounds writes surviving. Runs a child that is expected to die.</td></tr>
             <tr><td><code>test_fork</code></td><td class="n">3</td><td><code>`Keep</code>, <code>`Wipe_in_child</code>, and switching back.</td></tr>
             <tr><td><code>test_unix</code></td><td class="n">2</td><td>Descriptor read and write, and the error paths.</td></tr>
             <tr><td><code>test_unix_wipe</code></td><td class="n">1</td><td>A partially filled secret is destroyed when a read fails.</td></tr>
-            <tr><td><code>test_wipe_races</code></td><td class="n">1</td><td><code>wipe_all</code> during a blocked <code>read</code> on another domain: the bytes that land in retired storage are zeroized again.</td></tr>
             <tr><td><code>test_c_api</code></td><td class="n">&mdash;</td><td><code>secret.h</code> exercised from C: borrowing, length, destruction.</td></tr>
             <tr><td><code>test_mlock_limit</code></td><td class="n">&mdash;</td><td><code>mlock</code> failing under a lowered <code>RLIMIT_MEMLOCK</code> is reported, not fatal.</td></tr>
           </tbody>
         </table>
       </div>
 
-      <p>The two harnesses and the census are run by hand or in CI:</p>
+      <p>The two harnesses, allocation check, and census are run by hand or in CI:</p>
 
       <pre><code>dune exec bench/ct_equal.exe -- 20000 200
 dune exec bench/alloc_bench.exe
-dune exec test/leak_scan.exe</code></pre>
+dune exec bench/alloc_check.exe
+SECRET_CENSUS=true dune build @census</code></pre>
 
       <p>
         What each of them measures, and the numbers from the last run, are on
@@ -160,9 +160,9 @@ website/              this static documentation site</code></pre>
             <tr><th scope="col">Job</th><th scope="col">Target</th><th scope="col">Runs</th></tr>
           </thead>
           <tbody>
-            <tr><td>CI</td><td>Ubuntu, OCaml 4.14</td><td><code>@install @runtest</code></td></tr>
-            <tr><td>CI</td><td>Ubuntu, OCaml 5.0</td><td><code>@install @runtest</code></td></tr>
-            <tr><td>CI</td><td>Ubuntu, OCaml 5.5</td><td><code>@install @runtest @doc</code>, both benchmark harnesses, <code>opam lint --strict</code>, an install from a clean <code>git archive</code>, and <code>scan-build</code> over the C stubs</td></tr>
+            <tr><td>CI</td><td>Ubuntu, OCaml 4.14 and every 5.0–5.5 minor</td><td><code>@install @runtest</code></td></tr>
+            <tr><td>CI</td><td>Ubuntu, bytecode-only and Flambda compilers</td><td><code>@install @runtest</code></td></tr>
+            <tr><td>CI</td><td>Ubuntu, OCaml 5.5</td><td><code>@fmt @doc</code>, generated OPAM metadata, clean-archive install, installed OCaml/C consumer, allocation assertions, ASan/UBSan, <code>scan-build</code>, and the optional Mirage Crypto census</td></tr>
             <tr><td>CI</td><td>macOS, OCaml 5.5</td><td><code>@install @runtest</code></td></tr>
             <tr><td>Portability</td><td>Alpine musl, OCaml 5.4</td><td><code>@install @runtest</code></td></tr>
             <tr><td>Portability</td><td>Alpine i386, OCaml 4.14</td><td>The 32-bit word size, where block arithmetic and pool size classes can alias</td></tr>
@@ -175,8 +175,11 @@ website/              this static documentation site</code></pre>
       <p>
         The Clang static analyzer runs on a clean rebuild, and the
         clean-archive leg catches anything that only builds because it is still
-        sitting in the working tree. The portability jobs run weekly and on
-        demand rather than per commit.
+        sitting in the working tree. The full timing and throughput harnesses
+        run on schedule, on demand, and for release tags; pull requests run a
+        short timing smoke test and deterministic allocation assertions. The
+        portability jobs run for relevant pull requests, weekly, on demand,
+        and for release tags.
         The 32-bit leg is not a formality: the C stubs size several things off
         <code>value</code>, and a size-class index that aliases two classes
         would hand a short block to a longer secret.

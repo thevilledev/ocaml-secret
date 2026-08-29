@@ -11,3 +11,8 @@
   (language c)
   (names ct_stubs)
   (include_dirs %{project_root}/src)))
+
+(executable
+ (name alloc_check)
+ (modules alloc_check)
+ (libraries secret))

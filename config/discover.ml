@@ -42,6 +42,19 @@ let () =
       let freestanding = sw "__ocaml_solo5__" || sw "__ocaml_freestanding__" in
       let win32 = sw "_WIN32" in
       let msvc = sw "_MSC_VER" in
+      let sanitize =
+        (not msvc) && Sys.getenv_opt "SECRET_SANITIZE" = Some "1"
+      in
+      let sanitizer_flags =
+        if sanitize then
+          [
+            "-fsanitize=address,undefined";
+            "-fno-omit-frame-pointer";
+            "-O1";
+            "-g";
+          ]
+        else []
+      in
       (* The flags used for the real build; probes use the same ones.
          _GNU_SOURCE exposes explicit_bzero, madvise, MADV_* and getrandom on
          glibc/musl when compiling in strict C11 mode; it is harmless on the
@@ -58,6 +71,7 @@ let () =
             "-O2";
             "-fno-strict-aliasing";
           ]
+          @ sanitizer_flags
       in
       let probe = probe c ~c_flags:cflags in
       let probes =
@@ -132,6 +146,9 @@ let () =
       C.C_define.gen_header_file c ~fname:"secret_config.h" defines;
       (* pthread_atfork resolves through the OCaml runtime's own pthread
          dependency; no extra -lpthread needed. *)
-      let clibs = if win32 then [ "-lbcrypt" ] else [] in
+      let clibs =
+        (if win32 then [ "-lbcrypt" ] else [])
+        @ if sanitize then [ "-fsanitize=address,undefined" ] else []
+      in
       C.Flags.write_sexp "cflags.sexp" cflags;
       C.Flags.write_sexp "clibs.sexp" clibs)
