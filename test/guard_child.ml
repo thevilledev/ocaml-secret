@@ -13,7 +13,10 @@ let () =
   end;
   Secret.fill t 'g';
   let page = (Secret.capabilities ()).Secret.page_size in
-  let bsz = (len + 8) / 8 * 8 in
+  (* OCaml string blocks are word-aligned. Using an 8-byte literal makes the
+     guard offsets wrong on 32-bit runtimes: the underflow remains inside the
+     payload page and the supposedly in-bounds write reaches the guard. *)
+  let bsz = Helpers.block_size len in
   let inner = round_up (16 + bsz) page in
   print_endline "armed";
   (match mode with
