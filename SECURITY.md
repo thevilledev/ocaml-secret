@@ -12,8 +12,11 @@ backport.
 
 ## Reporting a vulnerability
 
-Do not open a public issue for a suspected vulnerability. Email
-`ville@vesilehto.fi` with the subject `[ocaml-secret security]` and include:
+Do not open a public issue for a suspected vulnerability. Report it through
+[GitHub private vulnerability reporting][report] instead. The report creates a
+private security advisory visible only to you and the repository maintainers.
+
+Include:
 
 - the affected version or commit;
 - the operating system, architecture, and OCaml version;
@@ -28,3 +31,5 @@ public disclosure.
 
 For non-sensitive correctness bugs and feature requests, use the public issue
 tracker.
+
+[report]: https://github.com/thevilledev/ocaml-secret/security/advisories/new
