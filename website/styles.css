@@ -84,21 +84,13 @@ pre code {
   font-size: 1em;
 }
 
-pre.plain {
-  border: 0;
-  padding: 0;
-}
-
 .banner {
-  font-size: 0.75em;
-  line-height: 1.15;
-  margin: 0.6em 0 0;
-}
-
-@media (max-width: 480px) {
-  .banner {
-    font-size: 0.56em;
-  }
+  display: block;
+  width: 100%;
+  max-width: 610px;
+  height: auto;
+  margin: 0.9em 0 0.2em;
+  color: #000;
 }
 
 nav.top {
