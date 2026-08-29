@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Measured results for the OCaml secret library: a process-memory leak census, a dudect constant-time test, and allocation costs.">
+    <meta name="theme-color" content="#ffffff">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="secret benchmarks">
+    <meta property="og:description" content="How many key copies survive in process memory, whether equality leaks timing, and what each tier costs.">
+    <meta property="og:url" content="https://ville.dev/ocaml-secret/benchmarks.html">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="secret benchmarks">
+    <meta name="twitter:description" content="How many key copies survive in process memory, whether equality leaks timing, and what each tier costs.">
+    <link rel="canonical" href="https://ville.dev/ocaml-secret/benchmarks.html">
+    <link rel="stylesheet" href="styles.css">
+    <title>secret benchmarks</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <nav class="top" aria-label="Primary navigation">
+      [ <a href="index.html">overview</a> |
+      <a href="usage.html">usage</a> |
+      <a href="guarantees.html">guarantees</a> |
+      benchmarks |
+      <a href="development.html">dev</a> |
+      <a href="https://github.com/thevilledev/ocaml-secret">source</a> ]
+    </nav>
+
+    <main id="content">
+      <h1>Benchmarks</h1>
+
+      <p>
+        Three questions decide whether this library does what it claims. How
+        many copies of a key are left in process memory when you are done with
+        it? Does comparing secrets leak their contents through timing? And what
+        does the safety cost? Each has a harness in the repository, and each
+        runs in CI.
+      </p>
+
+      <p class="fine">
+        Measured on an Apple M1 Pro, macOS 26.6.2, OCaml 5.4.1, mirage-crypto
+        2.4.0. Single runs, rounded. Timings on a laptop move by 10&ndash;20%
+        between runs; the leak counts do not move at all.
+      </p>
+
+      <h2 id="census">Leak census</h2>
+
+      <p>
+        <code>test/leak_scan.exe</code> generates an AES-256 key in a
+        <code>Secret.t</code>, drives real AES-GCM traffic through
+        mirage-crypto, then scans every writable mapping of its own process for
+        the key: the minor heap, the C stack, and everything else. It searches
+        for the 24-byte tail of the key both verbatim and byte-swapped per
+        32-bit word, which is how the generic AES key schedule stores it.
+        Copies inside <code>Secret.t</code> payloads are excluded from the
+        counts, since those are the ones the library will erase.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Copies remaining after the key was dropped, collected, scrubbed and destroyed</caption>
+          <thead>
+            <tr>
+              <th scope="col">Case</th>
+              <th scope="col" class="n">Raw key</th>
+              <th scope="col" class="n">Expanded key</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Key held only in <code>Secret.t</code>, never handed out</td><td class="n">0</td><td class="n">0</td></tr>
+            <tr><td>Zero-copy view; schedule died young, minor heap scrubbed</td><td class="n">0</td><td class="n">0</td></tr>
+            <tr><td>Zero-copy view; schedule reached the major heap</td><td class="n">0</td><td class="n">1</td></tr>
+            <tr><td><code>unsafe_to_string</code> baseline; schedule reached the major heap</td><td class="n">1</td><td class="n">1</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The view removes the raw-key copy in every case: mirage-crypto's
+        <code>of_secret</code> holds on to its argument string, and with a view
+        that argument <em>is</em> the secret memory. What the view cannot remove
+        is the key schedule mirage-crypto expands into the OCaml heap. Whether
+        that schedule can be erased depends only on where the GC put it.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Expanded-key copies as cleanup proceeds</caption>
+          <thead>
+            <tr>
+              <th scope="col">After</th>
+              <th scope="col" class="n">View, schedule died young</th>
+              <th scope="col" class="n">View, schedule promoted</th>
+              <th scope="col" class="n">Heap-string baseline</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Key live, traffic encrypted</td><td class="n">1</td><td class="n">1</td><td class="n">1</td></tr>
+            <tr><td>Key dropped, <code>Gc.full_major</code></td><td class="n">1</td><td class="n">1</td><td class="n">1</td></tr>
+            <tr><td><code>Secret.Gc.scrub_minor_heap</code></td><td class="n">0</td><td class="n">1</td><td class="n">1</td></tr>
+            <tr><td><code>Secret.destroy</code></td><td class="n">0</td><td class="n">1</td><td class="n">1</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        <code>Gc.full_major</code> does nothing here, which is the point: the
+        collector reclaims memory, it does not erase it. Scrubbing the minor
+        heap erases a schedule that died young. A promoted schedule survives
+        everything &mdash; <code>Gc.full_major</code>,
+        <code>scrub_minor_heap</code> and <code>Secret.destroy</code> alike
+        &mdash; and stays readable until the receiving library stops building
+        key schedules in the heap. That is not a gap this library can close from
+        the outside, and the census exists so the claim is not made.
+      </p>
+
+      <pre><code>dune exec test/leak_scan.exe</code></pre>
+
+      <h2 id="constant-time">Constant-time equality</h2>
+
+      <p>
+        <code>bench/ct_equal.exe</code> is a dudect-style leakage test
+        (Reparaz, Balasch and Verbauwhede, 2017): two classes of input,
+        interleaved at random, timed with a cycle counter, and compared with
+        Welch's t-test. One class differs from the reference secret in the
+        first byte, the other in the last, so a comparison that returns early
+        will separate the two distributions. The class contents are written into
+        the same working secret before each sample, so both classes see the same
+        addresses and the same cache state. The top 1% of samples is dropped, as
+        dudect does, to shed interrupts and context switches.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>20,000 samples of 200 calls each, 64-byte secrets; mean cycles per call, and |t| &lt; 4.5 meaning no evidence of a timing difference</caption>
+          <thead>
+            <tr>
+              <th scope="col">Case</th>
+              <th scope="col" class="n">Equal, ticks</th>
+              <th scope="col" class="n">Differing, ticks</th>
+              <th scope="col" class="n">|t|</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Differs in first byte, C primitive</td><td class="n">149.3</td><td class="n">149.5</td><td class="n">2.35</td></tr>
+            <tr><td>Differs in last byte, C primitive</td><td class="n">149.6</td><td class="n">149.3</td><td class="n">2.24</td></tr>
+            <tr><td>Differs in first byte, <code>Secret.equal</code></td><td class="n">145.5</td><td class="n">145.1</td><td class="n">2.67</td></tr>
+            <tr><td>Differs in last byte, <code>Secret.equal</code></td><td class="n">144.5</td><td class="n">144.5</td><td class="n">1.37</td></tr>
+            <tr><td><code>String.equal</code>, control</td><td class="n">&mdash;</td><td class="n">&mdash;</td><td class="n">3040</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The control row is the reason to trust the other four: the same harness,
+        pointed at <code>String.equal</code>, separates the classes by a t
+        statistic three orders of magnitude over the threshold. A test that
+        cannot fail proves nothing.
+      </p>
+
+      <p>
+        Absence of evidence is not a proof of constant time. Run it on the
+        hardware you care about, unloaded; CI only checks that it runs.
+      </p>
+
+      <pre><code>dune exec bench/ct_equal.exe -- 20000 200</code></pre>
+
+      <h2 id="allocation">Allocation and access costs</h2>
+
+      <div class="table-scroll">
+        <table>
+          <caption><code>bench/alloc_bench.exe</code>, nanoseconds per operation</caption>
+          <thead>
+            <tr>
+              <th scope="col">Operation</th>
+              <th scope="col" class="n">ns/op</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>Bytes.create 32</code>, for reference</td><td class="n">6</td></tr>
+            <tr><td><code>Secret.Unsafe.string_view</code></td><td class="n">7</td></tr>
+            <tr><td><code>Secret.equal</code>, 32 bytes</td><td class="n">19</td></tr>
+            <tr><td><code>String.equal</code>, 32 bytes, not constant time</td><td class="n">8</td></tr>
+            <tr><td><code>Secret.expose</code> 32 bytes, scratch copy and wipe</td><td class="n">63</td></tr>
+            <tr><td><code>Secret.create 240</code> + <code>destroy</code>, default tier</td><td class="n">83</td></tr>
+            <tr><td><code>Secret.create 32</code> + <code>destroy</code>, default tier</td><td class="n">88</td></tr>
+            <tr><td><code>Secret.of_string 32</code> + <code>destroy</code></td><td class="n">92</td></tr>
+            <tr><td><code>Secret.create 32</code>, left to the collector</td><td class="n">100</td></tr>
+            <tr><td><code>Secret.equal</code>, 4,096 bytes</td><td class="n">1,814</td></tr>
+            <tr><td><code>Secret.create ~hardened 32</code> + <code>destroy</code>, pooled</td><td class="n">2,005</td></tr>
+            <tr><td><code>Secret.create ~hardened 32</code>, first use: <code>mmap</code> and <code>mlock</code></td><td class="n">6,056</td></tr>
+            <tr><td><code>Secret.Gc.scrub_minor_heap</code></td><td class="n">25,555</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        Read it as an order-of-magnitude ladder rather than a leaderboard. A
+        secret in the default tier costs roughly fifteen times a
+        <code>Bytes.create</code> and is still under 100&nbsp;ns, which is
+        nothing next to any cryptographic operation you would use it for. A
+        zero-copy view is essentially free, because nothing is copied.
+      </p>
+
+      <p>
+        The hardened tier costs about twenty times the default tier, and its
+        first allocation in a size class about seventy times: that one pays for
+        an <code>mmap</code>, two guard pages and an <code>mlock</code>. The
+        pool is what separates those two rows, and it is the reason hardening is
+        opt in per value rather than a global switch. Harden the root key; do
+        not harden every nonce.
+      </p>
+
+      <p>
+        <code>scrub_minor_heap</code> costs a minor collection plus a
+        <code>memset</code> of the minor heap &mdash; 256k words by default, so
+        tens of microseconds. Call it after a handshake, not inside a loop.
+      </p>
+
+      <pre><code>dune exec bench/alloc_bench.exe</code></pre>
+
+      <h2 id="reading">What to take from this</h2>
+
+      <ul>
+        <li>Pass a view, not a string, and the raw key stops appearing in
+          process memory at all.</li>
+        <li>Destroy secrets explicitly. Collection erases them too, but on the
+          collector's schedule rather than yours.</li>
+        <li>Scrub the minor heap after a key-handling phase ends; it is the only
+          thing here that erases another library's short-lived intermediates.</li>
+        <li>Harden long-lived keys and leave everything else on the default
+          tier.</li>
+        <li>Check <code>Secret.status</code> rather than assuming a hardening
+          feature was granted.</li>
+      </ul>
+    </main>
+
+    <footer>
+      <p>
+        <a href="guarantees.html">guarantees</a> &middot;
+        <a href="development.html">run the harnesses</a> &middot;
+        <a href="https://github.com/thevilledev/ocaml-secret">source</a>
+      </p>
+    </footer>
+  </body>
+</html>

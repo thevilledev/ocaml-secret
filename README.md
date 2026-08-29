@@ -7,6 +7,8 @@ zero-copy views for existing `string` and `bytes` APIs.
 Status: 0.1.0, experimental. OCaml 4.14 and 5.x are supported. CI covers Linux
 and macOS; Windows and solo5 builds are best effort.
 
+Documentation: [ville.dev/ocaml-secret](https://ville.dev/ocaml-secret/).
+
 ```ocaml
 let aes =
   Secret.with_random 32 (fun key ->
@@ -70,6 +72,7 @@ dune build @install @runtest @doc
 ```
 
 See [the leak census](docs/census.md) for measured process-memory copies. The
-constant-time and allocation harnesses are in `bench/`.
+constant-time and allocation harnesses are in `bench/`; the latest numbers are
+on the [benchmarks page](https://ville.dev/ocaml-secret/benchmarks.html).
 
 ISC licensed.

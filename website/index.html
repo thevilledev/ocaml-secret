@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="secret is an OCaml library that keeps key material outside the OCaml heap, with explicit zeroization, constant-time equality, and zero-copy views."
+    >
+    <meta name="theme-color" content="#ffffff">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="secret">
+    <meta
+      property="og:description"
+      content="Key material outside the OCaml heap. Zeroized on destroy, on collection, and at exit."
+    >
+    <meta property="og:url" content="https://ville.dev/ocaml-secret/">
+    <meta property="og:image" content="https://ville.dev/ocaml-secret/og.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="secret — zeroized secret memory outside the OCaml heap">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="secret">
+    <meta name="twitter:description" content="Key material outside the OCaml heap. Zeroized on destroy, on collection, and at exit.">
+    <meta name="twitter:image" content="https://ville.dev/ocaml-secret/og.png">
+    <meta name="twitter:image:alt" content="secret — zeroized secret memory outside the OCaml heap">
+    <link rel="canonical" href="https://ville.dev/ocaml-secret/">
+    <link rel="stylesheet" href="styles.css">
+    <title>secret: zeroized secret memory outside the OCaml heap</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <nav class="top" aria-label="Primary navigation">
+      [ overview |
+      <a href="usage.html">usage</a> |
+      <a href="guarantees.html">guarantees</a> |
+      <a href="benchmarks.html">benchmarks</a> |
+      <a href="development.html">dev</a> |
+      <a href="https://github.com/thevilledev/ocaml-secret">source</a> ]
+    </nav>
+
+    <main id="content">
+      <pre class="plain banner" aria-hidden="true">
+ OCaml heap                   outside the OCaml heap
+  Secret.t  ---- owns ----&gt;   [guard][hdr|key bytes][guard]
+                                          |
+  destroy / exit / GC  ------- zeroize ---+</pre>
+      <h1>secret</h1>
+
+      <p>
+        An OCaml library for key material. A <code>Secret.t</code> owns a
+        fixed-length buffer allocated in C memory, so the garbage collector
+        never copies the payload and never leaves a stale copy behind. The
+        bytes are zeroized on <code>destroy</code>, when the handle is
+        collected, and at normal process exit.
+      </p>
+
+      <ul>
+        <li>The payload is unreachable through polymorphic <code>compare</code>, <code>Hashtbl.hash</code> and <code>Marshal</code>; printing is redacted.</li>
+        <li><code>equal</code> compares contents in time that depends only on the length.</li>
+        <li>Zero-copy views hand existing <code>string</code>- and <code>bytes</code>-based APIs the secret memory itself.</li>
+        <li>An optional hardened tier adds guard pages, a canary, page locking, and core-dump exclusion, and reports per value what it actually got.</li>
+      </ul>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Copies of an AES-256 key left in process memory after cleanup</caption>
+          <thead>
+            <tr>
+              <th scope="col">Case</th>
+              <th scope="col" class="n">Raw key</th>
+              <th scope="col" class="n">Expanded key</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Key held only in <code>Secret.t</code></td><td class="n">0</td><td class="n">0</td></tr>
+            <tr><td>Zero-copy view; schedule died young and the minor heap was scrubbed</td><td class="n">0</td><td class="n">0</td></tr>
+            <tr><td>Zero-copy view; schedule reached the major heap</td><td class="n">0</td><td class="n">1</td></tr>
+            <tr><td>Heap-string baseline; schedule reached the major heap</td><td class="n">1</td><td class="n">1</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The scanner walks every writable mapping of the process looking for the
+        key. Passing a view instead of a <code>string</code> removes the raw-key
+        copy; it cannot remove a key schedule the receiving library built in the
+        OCaml heap. Method and full output:
+        <a href="benchmarks.html#census">the leak census</a>.
+      </p>
+
+      <div class="notice">
+        <p>
+          <strong>Experimental.</strong> The API may change before 1.0.
+          This library reduces the number of places a key can be read from; it
+          is not a substitute for an HSM or a KMS when the threat model needs
+          hardware-backed isolation.
+        </p>
+      </div>
+
+      <table>
+        <caption>Current state</caption>
+        <tbody>
+          <tr><th scope="row">Release</th><td>0.1.0</td></tr>
+          <tr><th scope="row">OCaml</th><td>4.14 or newer, including 5.x</td></tr>
+          <tr><th scope="row">Tested platforms</th><td>Linux and macOS on every commit; musl and 32-bit weekly; Windows and solo5 best effort</td></tr>
+          <tr><th scope="row">Runtime dependencies</th><td>none beyond the standard library</td></tr>
+          <tr><th scope="row">License</th><td>ISC</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="quick-start">Quick start</h2>
+
+      <pre><code>opam pin add secret https://github.com/thevilledev/ocaml-secret.git</code></pre>
+
+      <p>Depend on the library from dune:</p>
+
+      <pre><code>(executable
+ (name main)
+ (libraries secret))</code></pre>
+
+      <p>Generate a key, use it, and destroy it:</p>
+
+      <pre><code>let () =
+  let key = Secret.random 32 in
+  let view = Secret.Unsafe.string_view key in
+  let aes = Mirage_crypto.AES.GCM.of_secret view in
+  (* ... use [aes] while [key] is alive ... *)
+  Secret.destroy key</code></pre>
+
+      <p>
+        <code>Secret.random</code> writes OS entropy straight into the secret
+        memory; no copy passes through the OCaml heap.
+        <code>Secret.Unsafe.string_view</code> hands mirage-crypto an ordinary
+        <code>string</code> whose bytes <em>are</em> that memory, so no copy is
+        made on the way in either. <code>Secret.destroy</code> zeroizes it
+        immediately instead of waiting for the collector.
+      </p>
+
+      <h2 id="tiers">Choose a tier</h2>
+
+      <dl>
+        <dt><strong>Default</strong></dt>
+        <dd>
+          <code>calloc</code> memory, zeroed on release and pooled for reuse.
+          About 100&nbsp;ns to
+          <a href="benchmarks.html#allocation">create and destroy</a>. Use it for
+          many small or short-lived keys.
+        </dd>
+        <dt><strong>Hardened</strong></dt>
+        <dd>
+          <code>Secret.create ~hardened:true</code> gives the payload its own
+          mapping with guard pages on both sides, a canary, <code>mlock</code>,
+          and exclusion from core dumps. Costs at least three pages of address
+          space and roughly 2&nbsp;&micro;s per secret. Use it for long-lived
+          root keys.
+        </dd>
+      </dl>
+
+      <p>
+        Every hardening feature is best effort and platform-dependent.
+        <code>Secret.status</code> reports what a given value actually got, so
+        the outcome is never assumed. See
+        <a href="guarantees.html">what is and is not guaranteed</a>, or start
+        with <a href="usage.html">usage</a>.
+      </p>
+    </main>
+
+    <footer>
+      <p>
+        <a href="https://github.com/thevilledev/ocaml-secret">github.com/thevilledev/ocaml-secret</a>
+        &middot; <a href="https://github.com/thevilledev/ocaml-secret/blob/main/src/secret.mli">API</a>
+        &middot; <a href="https://github.com/thevilledev/ocaml-secret/issues">issues</a>
+      </p>
+    </footer>
+  </body>
+</html>

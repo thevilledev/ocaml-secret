@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Install the OCaml secret library and use it: creation, destruction, exposure, zero-copy views, hardening, and file-descriptor I/O.">
+    <meta name="theme-color" content="#ffffff">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Using secret">
+    <meta property="og:description" content="Create, destroy, expose, view, harden, and read secrets straight from a file descriptor.">
+    <meta property="og:url" content="https://ville.dev/ocaml-secret/usage.html">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Using secret">
+    <meta name="twitter:description" content="Create, destroy, expose, view, harden, and read secrets straight from a file descriptor.">
+    <link rel="canonical" href="https://ville.dev/ocaml-secret/usage.html">
+    <link rel="stylesheet" href="styles.css">
+    <title>Using secret</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <nav class="top" aria-label="Primary navigation">
+      [ <a href="index.html">overview</a> |
+      usage |
+      <a href="guarantees.html">guarantees</a> |
+      <a href="benchmarks.html">benchmarks</a> |
+      <a href="development.html">dev</a> |
+      <a href="https://github.com/thevilledev/ocaml-secret">source</a> ]
+    </nav>
+
+    <main id="content">
+      <h1>Usage</h1>
+
+      <p>
+        The rule that shapes every API here: a secret should be born in secret
+        memory, be read without leaving it, and be destroyed as soon as it is no
+        longer needed. Each section below is one step of that lifecycle.
+      </p>
+
+      <h2 id="install">Install</h2>
+
+      <p>The library is not in the opam repository yet. Pin it:</p>
+
+      <pre><code>opam pin add secret https://github.com/thevilledev/ocaml-secret.git</code></pre>
+
+      <p>
+        OCaml 4.14 or newer is required. There are no runtime dependencies;
+        <code>dune-configurator</code> probes the platform at build time and the
+        C stubs fall back to portable code when a feature is missing.
+      </p>
+
+      <table>
+        <caption>Libraries</caption>
+        <thead>
+          <tr><th scope="col">Name</th><th scope="col">Contents</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>secret</code></td><td>The <code>Secret</code> module and the installed <code>secret.h</code> header.</td></tr>
+          <tr><td><code>secret.unix</code></td><td><code>Secret_unix</code>: <code>read(2)</code> and <code>write(2)</code> directly on secret memory. Not built on Windows.</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="create">Create a secret</h2>
+
+      <p>
+        Prefer a constructor that fills the memory in place. Every one of these
+        avoids an intermediate OCaml string.
+      </p>
+
+      <table>
+        <caption>Constructors</caption>
+        <thead>
+          <tr><th scope="col">Call</th><th scope="col">Source of the bytes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>Secret.random n</code></td><td>OS entropy, written straight into the payload.</td></tr>
+          <tr><td><code>Secret.init n f</code></td><td>A KDF, PRNG or decoder writing through a mutable view.</td></tr>
+          <tr><td><code>Secret_unix.read_file path</code></td><td>A file, read with <code>read(2)</code> into the payload.</td></tr>
+          <tr><td><code>Secret.of_bytes ~wipe_source:true b</code></td><td>An existing buffer, zeroized afterwards.</td></tr>
+          <tr><td><code>Secret.of_string s</code></td><td>An OCaml string, which <em>cannot</em> be wiped. Last resort.</td></tr>
+        </tbody>
+      </table>
+
+      <pre><code>let key = Secret.random 32
+
+(* or let a producer fill the payload in place *)
+let key =
+  Secret.init 32 (fun buf -&gt;
+      Mirage_crypto_rng.generate_into buf (Bytes.length buf))</code></pre>
+
+      <p>
+        <code>of_string</code> is honest about its cost: the argument stays in
+        the OCaml heap until it is collected, and nothing in this library can
+        reach it. Use it only when the bytes already arrived as a string.
+      </p>
+
+      <h2 id="destroy">Destroy it</h2>
+
+      <p>
+        <code>Secret.destroy</code> zeroizes the contents immediately and
+        releases the memory. It is idempotent, and every accessor afterwards
+        raises <code>Secret.Destroyed</code> rather than returning stale bytes.
+      </p>
+
+      <pre><code>Secret.destroy key</code></pre>
+
+      <p>
+        Use <code>Secret.with_secret</code> when the lifetime is a scope; it
+        destroys the secret whether the body returns or raises.
+      </p>
+
+      <pre><code>Secret.with_secret 32 (fun k -&gt;
+    Secret_unix.read_exactly fd k ~off:0 ~len:32;
+    authenticate k)</code></pre>
+
+      <p>
+        Collection and normal process exit are backstops, not the plan.
+        <code>Secret.wipe_all</code> is registered with <code>Stdlib.at_exit</code>
+        at module initialisation, so it runs after every handler registered by
+        code that uses the library. It does not run on <code>Unix._exit</code>,
+        on a signal, or after a runtime fatal error &mdash; call it from your own
+        signal handler if that matters.
+      </p>
+
+      <h2 id="use">Use the bytes</h2>
+
+      <p>
+        Three ways to get at the contents, in order of how much they cost you.
+      </p>
+
+      <h3 id="views">Zero-copy views</h3>
+
+      <p>
+        A view is an ordinary OCaml <code>string</code> or <code>bytes</code>
+        whose block header sits in front of the secret memory. Any existing API
+        that takes a string &mdash; including C stubs using
+        <code>String_val</code> &mdash; works on it without a copy.
+      </p>
+
+      <pre><code>let view = Secret.Unsafe.string_view key in
+let aes = Mirage_crypto.AES.GCM.of_secret view</code></pre>
+
+      <p>
+        Scoped variants make the lifetime explicit and are the better default:
+      </p>
+
+      <pre><code>Secret.Unsafe.with_string_view key (fun s -&gt;
+    Digestif.SHA256.hmac_string ~key:s msg)
+
+Secret.Unsafe.with_bigstring key (fun ba -&gt;
+    Digestif.SHA256.digest_bigstring ba)</code></pre>
+
+      <p>
+        A view is valid only while its owner is alive. Keep the owner reachable
+        for as long as any unscoped view exists, do not let a scoped view escape
+        its callback, and remember that <code>String.sub</code>, <code>^</code>,
+        <code>compare</code> and <code>Marshal</code> copy a view like any other
+        string. The rules are spelled out under
+        <a href="guarantees.html#views">view lifetimes</a>.
+      </p>
+
+      <h3 id="expose">Temporary copies</h3>
+
+      <p>
+        <code>Secret.expose</code> hands the callback a copy in a scratch buffer
+        allocated directly in the major heap, so the minor collector never
+        duplicates it, and wipes that buffer when the callback returns or
+        raises.
+      </p>
+
+      <pre><code>let digest =
+  Secret.expose key (fun buf -&gt; Digestif.SHA256.digest_bytes buf)</code></pre>
+
+      <p>
+        Use it when the callee needs a buffer it may mutate, or when there is no
+        view-shaped entry point. Whatever the callback does with the bytes &mdash;
+        <code>Bytes.to_string</code>, <code>Buffer.add_bytes</code>, passing them
+        to a string-keyed API &mdash; makes copies this library cannot wipe.
+      </p>
+
+      <h3 id="unsafe-string">Permanent copies</h3>
+
+      <p>
+        <code>Secret.unsafe_to_string</code> returns a fresh immutable string
+        that lives in the OCaml heap until it is collected and can never be
+        wiped. It exists for legacy APIs that retain their key argument. The
+        name is the warning.
+      </p>
+
+      <h2 id="compare">Compare in constant time</h2>
+
+      <p>
+        There is deliberately no <code>compare</code> and no <code>hash</code>.
+        Contents are compared in time that depends only on the length.
+      </p>
+
+      <pre><code>if Secret.equal_string expected_mac received then accept ()</code></pre>
+
+      <p>
+        Lengths are compared first with an ordinary branch, so the length is not
+        treated as secret. Polymorphic <code>compare</code> and
+        <code>Marshal</code> on a <code>Secret.t</code> raise
+        <code>Invalid_argument</code>; <code>pp</code> prints
+        <code>&lt;secret:32B&gt;</code>.
+      </p>
+
+      <h2 id="hardening">Harden the long-lived keys</h2>
+
+      <p>
+        Pass <code>~hardened:true</code> to any constructor to put the payload
+        in its own mapping, between guard pages, behind a canary, locked into
+        RAM and excluded from core dumps.
+      </p>
+
+      <pre><code>let root = Secret.random ~hardened:true 32</code></pre>
+
+      <p>
+        Every one of those is best effort and depends on the OS and on resource
+        limits. Nothing is assumed: ask what a value actually received.
+      </p>
+
+      <pre><code>match (Secret.status root).lock with
+| `Locked -&gt; ()
+| `Failed errno -&gt; Printf.eprintf "mlock failed with errno %d\n" errno
+| `Lost_on_fork -&gt; Secret.after_fork ()
+| `Unsupported | `Not_requested -&gt; ()</code></pre>
+
+      <p>
+        <code>Secret.capabilities ()</code> answers the same question for the
+        build and platform as a whole, before any secret exists. The full
+        meaning of each field is in
+        <a href="guarantees.html#status">status reporting</a>.
+      </p>
+
+      <p>Process-wide hardening is a separate, explicit step:</p>
+
+      <pre><code>let outcomes = Secret.Process.harden ()</code></pre>
+
+      <p>
+        By default that disables core dumps, marks the process non-dumpable on
+        Linux, and denies debugger attachment on macOS. It returns what happened
+        for each feature rather than raising. <code>Secret.Process.scrub_env</code>
+        zeroizes and removes a variable from the process environment block after
+        you have read it.
+      </p>
+
+      <h2 id="fork">Fork and exit</h2>
+
+      <p>
+        A forked child inherits copies of every secret, and memory locks are not
+        inherited. Choose a policy before you fork:
+      </p>
+
+      <pre><code>Secret.set_fork_policy `Wipe_in_child</code></pre>
+
+      <p>
+        With <code>`Wipe_in_child</code> an <code>atfork</code> handler zeroizes
+        every secret in the child, and on Linux hardened mappings also get
+        <code>MADV_WIPEONFORK</code>. With the default <code>`Keep</code>, call
+        <code>Secret.after_fork ()</code> in the child to re-establish
+        <code>mlock</code>.
+      </p>
+
+      <h2 id="io">Read a secret from a descriptor</h2>
+
+      <p>
+        <code>Unix.read</code> copies through a 64&nbsp;KiB buffer on the C
+        stack and <code>In_channel</code> through a channel buffer in the heap;
+        neither copy is ever zeroized. <code>Secret_unix</code> calls
+        <code>read(2)</code> and <code>write(2)</code> on the secret memory
+        itself.
+      </p>
+
+      <pre><code>let key = Secret_unix.read_file ~hardened:true "/run/secrets/api-key"</code></pre>
+
+      <pre><code>let key = Secret.create 32 in
+Secret_unix.read_exactly fd key ~off:0 ~len:32</code></pre>
+
+      <p>
+        The kernel page cache still holds its own copy of any file that was
+        read. That is outside this library's reach.
+      </p>
+
+      <h2 id="c-api">Accept a secret from C</h2>
+
+      <p>
+        The installed <code>secret.h</code> lets a C stub take a
+        <code>Secret.t</code> directly, or serve both a string and a secret from
+        one entry point.
+      </p>
+
+      <pre><code>#include &lt;secret.h&gt;
+
+const unsigned char *p;
+size_t len;
+if (secret_borrow_string_or_secret(v, &amp;p, &amp;len) != SECRET_OK)
+  caml_invalid_argument("destroyed secret");</code></pre>
+
+      <p>
+        The pointer is stable while the value is reachable and undestroyed.
+        Never hold it across an OCaml allocation that could make the value
+        unreachable.
+      </p>
+
+      <p>
+        Next: <a href="guarantees.html">what the library guarantees</a>, and the
+        <a href="benchmarks.html">measurements behind those claims</a>.
+      </p>
+    </main>
+
+    <footer>
+      <p>
+        <a href="index.html">overview</a> &middot;
+        <a href="guarantees.html">guarantees</a> &middot;
+        <a href="https://github.com/thevilledev/ocaml-secret/blob/main/src/secret.mli">secret.mli</a>
+      </p>
+    </footer>
+  </body>
+</html>

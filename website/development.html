@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Build, test, and extend the OCaml secret library: layout, test suites, platform probes, and the portability matrix.">
+    <meta name="theme-color" content="#ffffff">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Developing secret">
+    <meta property="og:description" content="Build and test the library, understand its layout, and add a platform feature.">
+    <meta property="og:url" content="https://ville.dev/ocaml-secret/development.html">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Developing secret">
+    <meta name="twitter:description" content="Build and test the library, understand its layout, and add a platform feature.">
+    <link rel="canonical" href="https://ville.dev/ocaml-secret/development.html">
+    <link rel="stylesheet" href="styles.css">
+    <title>Developing secret</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <nav class="top" aria-label="Primary navigation">
+      [ <a href="index.html">overview</a> |
+      <a href="usage.html">usage</a> |
+      <a href="guarantees.html">guarantees</a> |
+      <a href="benchmarks.html">benchmarks</a> |
+      dev |
+      <a href="https://github.com/thevilledev/ocaml-secret">source</a> ]
+    </nav>
+
+    <main id="content">
+      <h1>Development</h1>
+
+      <p>
+        The library is a thin OCaml module over C stubs. Almost everything
+        interesting &mdash; the two allocation tiers, the reuse pool, the
+        zeroization primitive, the constant-time comparison &mdash; is in the C,
+        and the OCaml side exists to make the unsafe parts nameable.
+      </p>
+
+      <h2 id="setup">Build</h2>
+
+      <pre><code>git clone https://github.com/thevilledev/ocaml-secret.git
+cd ocaml-secret
+opam install . --deps-only --with-test --with-doc
+dune build @install @runtest @doc</code></pre>
+
+      <p>
+        There is nothing to configure. <code>config/discover.ml</code> probes
+        the platform during the build and writes
+        <code>secret_config.h</code>, and every probe failure is a fallback
+        rather than an error.
+      </p>
+
+      <h2 id="tests">Tests</h2>
+
+      <pre><code>dune build @runtest</code></pre>
+
+      <p>
+        Fifty alcotest cases across eight suites, plus two standalone
+        executables and the census. Several of them are only meaningful as
+        subprocesses, because what they assert is how the process dies.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Test suites</caption>
+          <thead>
+            <tr><th scope="col">Suite</th><th scope="col" class="n">Cases</th><th scope="col">Covers</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>test_secret</code></td><td class="n">22</td><td>The API surface: construction, blits, exposure, views, both tiers, pool reuse and size classes, scratch buffers, capabilities, process hardening.</td></tr>
+            <tr><td><code>test_atexit</code></td><td class="n">7</td><td>Wipe on normal exit, <code>exit n</code>, an uncaught exception and exit from a domain; ordering against user <code>at_exit</code> handlers; the documented <code>Unix._exit</code> gap. Each runs a child process.</td></tr>
+            <tr><td><code>test_gc</code></td><td class="n">6</td><td>Survival across minor collection and compaction, finalizer release and zeroing, GC pressure accounting, minor-heap scrubbing.</td></tr>
+            <tr><td><code>test_domains</code></td><td class="n">5</td><td>Parallel creation, cross-domain finalization, concurrent double destroy, <code>wipe_all</code> under allocation. OCaml 5 only.</td></tr>
+            <tr><td><code>test_guard</code></td><td class="n">4</td><td>Overflow and underflow hitting a guard page, canary corruption aborting, in-bounds writes surviving. Runs a child that is expected to die.</td></tr>
+            <tr><td><code>test_fork</code></td><td class="n">3</td><td><code>`Keep</code>, <code>`Wipe_in_child</code>, and switching back.</td></tr>
+            <tr><td><code>test_unix</code></td><td class="n">2</td><td>Descriptor read and write, and the error paths.</td></tr>
+            <tr><td><code>test_unix_wipe</code></td><td class="n">1</td><td>A partially filled secret is destroyed when a read fails.</td></tr>
+            <tr><td><code>test_c_api</code></td><td class="n">&mdash;</td><td><code>secret.h</code> exercised from C: borrowing, length, destruction.</td></tr>
+            <tr><td><code>test_mlock_limit</code></td><td class="n">&mdash;</td><td><code>mlock</code> failing under a lowered <code>RLIMIT_MEMLOCK</code> is reported, not fatal.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The two harnesses and the census are run by hand or in CI:</p>
+
+      <pre><code>dune exec bench/ct_equal.exe -- 20000 200
+dune exec bench/alloc_bench.exe
+dune exec test/leak_scan.exe</code></pre>
+
+      <p>
+        What each of them measures, and the numbers from the last run, are on
+        the <a href="benchmarks.html">benchmarks page</a>.
+      </p>
+
+      <h2 id="layout">Layout</h2>
+
+      <pre><code>src/
+  secret.mli          the API and its stated limits
+  secret.ml           the OCaml surface over the stubs
+  secret_stubs.c      OCaml entry points, the custom block, views
+  secret_alloc.c      the two tiers, guard pages, canary, reuse pool
+  secret_zero.c       zeroization primitive selection
+  secret_ct.c         constant-time comparison
+  secret_random.c     OS entropy
+  secret_process.c    process-wide hardening
+  secret_gc.c         minor-heap scrubbing
+  secret.h            installed C interface for other libraries
+
+config/discover.ml    build-time feature probes
+unix/                 Secret_unix: read(2)/write(2) on secret memory
+bench/                constant-time and allocation harnesses
+test/                 alcotest suites, C-API test, leak census
+website/              this static documentation site</code></pre>
+
+      <p>
+        <code>secret_zero.c</code> is deliberately its own translation unit:
+        keeping the zeroization call across a unit boundary means only link-time
+        optimisation could let a compiler see through it and elide the write.
+      </p>
+
+      <h2 id="probes">Adding a platform feature</h2>
+
+      <p>
+        Features are not detected by <code>#ifdef __linux__</code>. Each one is
+        a tiny C program that <code>config/discover.ml</code> compiles and links
+        with exactly the flags the real build uses, since feature macros such as
+        <code>_GNU_SOURCE</code> change what the headers declare. The result
+        becomes a <code>SECRET_HAVE_*</code> switch.
+      </p>
+
+      <p>Four steps, in order:</p>
+
+      <ol>
+        <li>Add the probe to <code>config/discover.ml</code>.</li>
+        <li>Guard the implementation in the stubs with the new switch, and give
+          it a portable fallback.</li>
+        <li>Surface the outcome through <code>capabilities</code> for the build
+          and through <code>status</code> for the value.</li>
+        <li>State it in <code>secret.mli</code>. A feature that is not in the
+          documented list of guarantees is not a guarantee.</li>
+      </ol>
+
+      <p>
+        Cross-compilation to a freestanding target is handled ahead of the
+        probes: <code>secret_platform.h</code> forces the freestanding profile
+        whenever the target compiler defines <code>__ocaml_solo5__</code> or
+        <code>__ocaml_freestanding__</code>, so a configurator run with the wrong
+        compiler cannot switch on OS features that do not exist there.
+      </p>
+
+      <h2 id="ci">Continuous integration</h2>
+
+      <div class="table-scroll">
+        <table>
+          <caption>What runs where</caption>
+          <thead>
+            <tr><th scope="col">Job</th><th scope="col">Target</th><th scope="col">Runs</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>CI</td><td>Ubuntu, OCaml 4.14</td><td><code>@install @runtest</code></td></tr>
+            <tr><td>CI</td><td>Ubuntu, OCaml 5.4</td><td><code>@install @runtest @doc</code>, plus both benchmark harnesses</td></tr>
+            <tr><td>CI</td><td>macOS, OCaml 5.4</td><td><code>@install @runtest</code></td></tr>
+            <tr><td>Portability</td><td>Alpine musl, OCaml 5.4</td><td><code>@install @runtest</code></td></tr>
+            <tr><td>Portability</td><td>Alpine i386, OCaml 4.14</td><td>The 32-bit word size, where block arithmetic and pool size classes can alias</td></tr>
+            <tr><td>Portability</td><td>Windows mingw, OCaml 5.4</td><td>Best effort</td></tr>
+            <tr><td>Portability</td><td>solo5 cross-build</td><td>Best effort</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The portability jobs run weekly and on demand rather than per commit.
+        The 32-bit leg is not a formality: the C stubs size several things off
+        <code>value</code>, and a size-class index that aliases two classes
+        would hand a short block to a longer secret.
+      </p>
+
+      <h2 id="contributing">Contributing</h2>
+
+      <p>
+        The bar for a change here is a test that would have caught the bug, and
+        an <code>.mli</code> that still describes what the code does. A new
+        hardening feature needs its outcome reported through
+        <code>status</code>; a new way to reach the bytes needs
+        <code>expose</code>, <code>unsafe</code> or <code>view</code> in its
+        name, so that the greppable list stays complete.
+      </p>
+
+      <p>
+        Use
+        <a href="https://github.com/thevilledev/ocaml-secret/issues">issues</a>
+        for bugs and proposals. Contributions are ISC licensed.
+      </p>
+    </main>
+
+    <footer>
+      <p>
+        <a href="index.html">overview</a> &middot;
+        <a href="benchmarks.html">benchmarks</a> &middot;
+        <a href="https://github.com/thevilledev/ocaml-secret">source</a>
+      </p>
+    </footer>
+  </body>
+</html>
