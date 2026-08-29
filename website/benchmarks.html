@@ -143,11 +143,11 @@
             </tr>
           </thead>
           <tbody>
-            <tr><td>Differs in first byte, C primitive</td><td class="n">149.3</td><td class="n">149.5</td><td class="n">2.35</td></tr>
-            <tr><td>Differs in last byte, C primitive</td><td class="n">149.6</td><td class="n">149.3</td><td class="n">2.24</td></tr>
-            <tr><td>Differs in first byte, <code>Secret.equal</code></td><td class="n">145.5</td><td class="n">145.1</td><td class="n">2.67</td></tr>
-            <tr><td>Differs in last byte, <code>Secret.equal</code></td><td class="n">144.5</td><td class="n">144.5</td><td class="n">1.37</td></tr>
-            <tr><td><code>String.equal</code>, control</td><td class="n">&mdash;</td><td class="n">&mdash;</td><td class="n">3040</td></tr>
+            <tr><td>Differs in first byte, C primitive</td><td class="n">154.6</td><td class="n">154.6</td><td class="n">0.06</td></tr>
+            <tr><td>Differs in last byte, C primitive</td><td class="n">148.1</td><td class="n">148.0</td><td class="n">1.73</td></tr>
+            <tr><td>Differs in first byte, <code>Secret.equal</code></td><td class="n">148.1</td><td class="n">148.2</td><td class="n">0.94</td></tr>
+            <tr><td>Differs in last byte, <code>Secret.equal</code></td><td class="n">146.8</td><td class="n">146.8</td><td class="n">2.51</td></tr>
+            <tr><td><code>String.equal</code>, control</td><td class="n">&mdash;</td><td class="n">&mdash;</td><td class="n">1999</td></tr>
           </tbody>
         </table>
       </div>
@@ -178,27 +178,27 @@
             </tr>
           </thead>
           <tbody>
+            <tr><td><code>String.equal</code>, 32 bytes, not constant time</td><td class="n">4</td></tr>
             <tr><td><code>Bytes.create 32</code>, for reference</td><td class="n">6</td></tr>
             <tr><td><code>Secret.Unsafe.string_view</code></td><td class="n">7</td></tr>
-            <tr><td><code>Secret.equal</code>, 32 bytes</td><td class="n">19</td></tr>
-            <tr><td><code>String.equal</code>, 32 bytes, not constant time</td><td class="n">8</td></tr>
-            <tr><td><code>Secret.expose</code> 32 bytes, scratch copy and wipe</td><td class="n">63</td></tr>
-            <tr><td><code>Secret.create 240</code> + <code>destroy</code>, default tier</td><td class="n">83</td></tr>
-            <tr><td><code>Secret.create 32</code> + <code>destroy</code>, default tier</td><td class="n">88</td></tr>
-            <tr><td><code>Secret.of_string 32</code> + <code>destroy</code></td><td class="n">92</td></tr>
-            <tr><td><code>Secret.create 32</code>, left to the collector</td><td class="n">100</td></tr>
-            <tr><td><code>Secret.equal</code>, 4,096 bytes</td><td class="n">1,814</td></tr>
-            <tr><td><code>Secret.create ~hardened 32</code> + <code>destroy</code>, pooled</td><td class="n">2,005</td></tr>
-            <tr><td><code>Secret.create ~hardened 32</code>, first use: <code>mmap</code> and <code>mlock</code></td><td class="n">6,056</td></tr>
-            <tr><td><code>Secret.Gc.scrub_minor_heap</code></td><td class="n">25,555</td></tr>
+            <tr><td><code>Secret.equal</code>, 32 bytes</td><td class="n">20</td></tr>
+            <tr><td><code>Secret.expose</code> 32 bytes, scratch copy and wipe</td><td class="n">49</td></tr>
+            <tr><td><code>Secret.create 240</code> + <code>destroy</code>, default tier</td><td class="n">72</td></tr>
+            <tr><td><code>Secret.create 32</code> + <code>destroy</code>, default tier</td><td class="n">74</td></tr>
+            <tr><td><code>Secret.of_string 32</code> + <code>destroy</code></td><td class="n">82</td></tr>
+            <tr><td><code>Secret.create 32</code>, left to the collector</td><td class="n">83</td></tr>
+            <tr><td><code>Secret.create ~hardened 32</code> + <code>destroy</code>, pooled</td><td class="n">1,600</td></tr>
+            <tr><td><code>Secret.equal</code>, 4,096 bytes</td><td class="n">1,619</td></tr>
+            <tr><td><code>Secret.create ~hardened 32</code>, first use: <code>mmap</code> and <code>mlock</code></td><td class="n">5,031</td></tr>
+            <tr><td><code>Secret.Gc.scrub_minor_heap</code></td><td class="n">17,021</td></tr>
           </tbody>
         </table>
       </div>
 
       <p>
         Read it as an order-of-magnitude ladder rather than a leaderboard. A
-        secret in the default tier costs roughly fifteen times a
-        <code>Bytes.create</code> and is still under 100&nbsp;ns, which is
+        secret in the default tier costs about a dozen times a
+        <code>Bytes.create</code> and is still well under 100&nbsp;ns, which is
         nothing next to any cryptographic operation you would use it for. A
         zero-copy view is essentially free, because nothing is copied.
       </p>
@@ -232,7 +232,8 @@
         <li>Harden long-lived keys and leave everything else on the default
           tier.</li>
         <li>Check <code>Secret.status</code> rather than assuming a hardening
-          feature was granted.</li>
+          feature was granted, or use <code>require_hardening</code> to make a
+          missing one fatal.</li>
       </ul>
     </main>
 
