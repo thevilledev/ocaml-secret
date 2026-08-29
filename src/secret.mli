@@ -85,12 +85,19 @@ val of_bytes : ?hardened:bool -> wipe_source:bool -> bytes -> t
     promoted); use {!Scratch} buffers to avoid that. *)
 
 val init : ?hardened:bool -> int -> (bytes -> unit) -> t
-(** [init n f] creates a secret of [n] bytes and calls [f] with a zero-copy
-    mutable view of its memory so that a producer (a PRNG, a KDF, a decoder) can
-    fill it in place. [f] must not retain the view. *)
+(** [init n f] creates a secret of [n] bytes and calls [f] with a temporary
+    mutable {!Scratch} buffer so that a producer (a PRNG, a KDF, a decoder) can
+    initialize it. The buffer is copied into the secret, then zeroized when [f]
+    returns or raises. If [f] retains the buffer, it observes only zeroes after
+    [init] returns. Use {!Unsafe.init} when a zero-copy initializer is required.
+*)
 
 val with_secret : ?hardened:bool -> int -> (t -> 'a) -> 'a
 (** [with_secret n f] is [f (create n)]; the secret is destroyed when [f]
+    returns or raises. *)
+
+val with_random : ?hardened:bool -> int -> (t -> 'a) -> 'a
+(** [with_random n f] is [f (random n)]; the random secret is destroyed when [f]
     returns or raises. *)
 
 (** {1 Inspection} *)
@@ -137,6 +144,27 @@ type status = {
 
 val status : t -> status
 (** Never raises; usable after {!destroy}. *)
+
+type hardening_requirement =
+  [ `Page_backed
+  | `Guard_pages
+  | `Canary
+  | `Locked
+  | `No_core_dump
+  | `Wipe_on_fork ]
+
+exception Hardening_unavailable of hardening_requirement
+(** Raised by {!require_hardening} with the first requirement that was not met.
+*)
+
+val require_hardening : hardening_requirement list -> t -> t
+(** [require_hardening requirements t] returns [t] if every requirement is
+    currently met. Otherwise it destroys [t] before raising
+    {!Hardening_unavailable}. This makes the function safe to use in a pipeline,
+    for example
+    [random ~hardened:true 32 |> require_hardening [`Page_backed; `Locked]].
+
+    @raise Destroyed if [t] is already destroyed. *)
 
 type capabilities = {
   hardened_tier : bool;
@@ -227,6 +255,14 @@ val unsafe_to_string : t -> string
     [String]/[Bytes] function and C stubs using [String_val] work the same on
     both 4.14 and 5.x. *)
 module Unsafe : sig
+  val init : ?hardened:bool -> int -> (bytes -> unit) -> t
+  (** Zero-copy variant of {!init}. The callback receives a mutable view of the
+      new secret's memory. It must fill the view synchronously and must not
+      retain it. The secret is destroyed if the callback raises.
+
+      Retaining the view is a memory-safety error: after the owner is destroyed
+      the view may become invalid or observe a later pooled secret. *)
+
   val string_view : t -> string
   (** Zero-copy [string] view. Marks [t] as viewed (see {!val-status}).
       @raise Destroyed *)

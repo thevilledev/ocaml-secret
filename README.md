@@ -8,10 +8,9 @@ Status: 0.1.0, experimental. OCaml 4.14 and 5.x are supported. CI covers Linux
 and macOS; Windows and solo5 builds are best effort.
 
 ```ocaml
-let key = Secret.random 32 in
-let aes = Mirage_crypto.AES.GCM.of_secret (Secret.Unsafe.string_view key) in
-(* use aes *)
-Secret.destroy key
+let aes =
+  Secret.with_random 32 (fun key ->
+      Secret.Unsafe.with_string_view key Mirage_crypto.AES.GCM.of_secret)
 ```
 
 ## Guarantees
@@ -22,7 +21,8 @@ Secret.destroy key
   lengths.
 - Printing is redacted; polymorphic comparison and marshalling raise.
 - Hardened allocations request guard pages, page locking, and dump exclusion.
-  `Secret.status` reports which protections succeeded.
+  `Secret.status` reports which protections succeeded; `require_hardening`
+  destroys the secret and fails closed if selected protections are missing.
 - `Secret_unix` reads and writes directly between file descriptors and secret
   memory.
 
@@ -46,6 +46,8 @@ Use an HSM or KMS when the threat model requires hardware-backed isolation.
 ```ocaml
 val create : ?hardened:bool -> int -> Secret.t
 val random : ?hardened:bool -> int -> Secret.t
+val with_random : ?hardened:bool -> int -> (Secret.t -> 'a) -> 'a
+val require_hardening : Secret.hardening_requirement list -> Secret.t -> Secret.t
 val destroy : Secret.t -> unit
 val equal : Secret.t -> Secret.t -> bool
 val expose : Secret.t -> (bytes -> 'a) -> 'a

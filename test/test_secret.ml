@@ -212,15 +212,44 @@ let test_bigstring_view () =
           ignore (Bigarray.Array1.get ba 0))
 
 let test_init_random () =
-  let t = Secret.init 16 (fun b -> Bytes.fill b 0 16 'i') in
+  let escaped = ref None in
+  let t =
+    Secret.init ~hardened:true 16 (fun b ->
+        escaped := Some b;
+        Bytes.fill b 0 16 'i')
+  in
   Alcotest.(check string)
     "init" (String.make 16 'i')
     (Secret.unsafe_to_string t);
+  let escaped = Option.get !escaped in
+  Alcotest.(check string)
+    "retained init buffer is wiped" (String.make 16 '\000')
+    (Bytes.to_string escaped);
+  Secret.destroy t;
+  Alcotest.(check string)
+    "retained init buffer remains valid" (String.make 16 '\000')
+    (Bytes.to_string escaped);
   Alcotest.(check bool)
     "init view is scoped" false (Secret.status t).Secret.viewed;
-  (match Secret.init 4 (fun _ -> failwith "fill failed") with
+  let failed_buffer = ref None in
+  (match
+     Secret.init 4 (fun b ->
+         failed_buffer := Some b;
+         Bytes.fill b 0 4 'x';
+         failwith "fill failed")
+   with
   | _ -> Alcotest.fail "expected failure"
   | exception Failure _ -> ());
+  Alcotest.(check string)
+    "failed init buffer is wiped" (String.make 4 '\000')
+    (Bytes.to_string (Option.get !failed_buffer));
+  let direct = Secret.Unsafe.init 8 (fun b -> Bytes.fill b 0 8 'u') in
+  Alcotest.(check string)
+    "unsafe init" (String.make 8 'u')
+    (Secret.unsafe_to_string direct);
+  Alcotest.(check bool)
+    "unsafe init is scoped" false (Secret.status direct).Secret.viewed;
+  Secret.destroy direct;
   let caps = Secret.capabilities () in
   if caps.Secret.os_random then begin
     let r1 = Secret.random 32 and r2 = Secret.random 32 in
@@ -265,6 +294,31 @@ let test_with_secret () =
   | Some t ->
       Alcotest.(check bool) "destroyed after raise" true (Secret.is_destroyed t)
   | None -> Alcotest.fail "no secret"
+
+let test_with_random () =
+  Secret.set_entropy_source (fun b -> Bytes.fill b 0 (Bytes.length b) 'r');
+  let leaked = ref None in
+  let len =
+    Secret.with_random 16 (fun t ->
+        leaked := Some t;
+        Secret.length t)
+  in
+  Alcotest.(check int) "length" 16 len;
+  (match !leaked with
+  | Some t ->
+      Alcotest.(check bool) "destroyed after" true (Secret.is_destroyed t)
+  | None -> Alcotest.fail "no random secret");
+  (match
+     Secret.with_random 16 (fun t ->
+         leaked := Some t;
+         failwith "x")
+   with
+  | _ -> Alcotest.fail "expected exception"
+  | exception Failure _ -> ());
+  match !leaked with
+  | Some t ->
+      Alcotest.(check bool) "destroyed after raise" true (Secret.is_destroyed t)
+  | None -> Alcotest.fail "no random secret"
 
 let test_status_default_tier () =
   let t = s_of "x" in
@@ -322,6 +376,32 @@ let test_hardened () =
     (Secret.equal_string t2 (String.make 48 '\000'));
   Secret.destroy t2;
   Secret.destroy u
+
+let test_require_hardening () =
+  let plain = Secret.create 8 in
+  Alcotest.check_raises "missing page-backed tier"
+    (Secret.Hardening_unavailable `Page_backed) (fun () ->
+      ignore (Secret.require_hardening [ `Page_backed ] plain));
+  Alcotest.(check bool)
+    "failed requirement destroys secret" true
+    (Secret.is_destroyed plain);
+  let hard = Secret.create ~hardened:true 8 in
+  let st = Secret.status hard in
+  let available =
+    [
+      (`Page_backed, st.Secret.page_backed);
+      (`Guard_pages, st.Secret.guard_pages);
+      (`Canary, st.Secret.canary);
+      (`Locked, st.Secret.lock = `Locked);
+      (`No_core_dump, st.Secret.no_core_dump = `Yes);
+      (`Wipe_on_fork, st.Secret.wipe_on_fork);
+    ]
+    |> List.filter_map (fun (requirement, present) ->
+        if present then Some requirement else None)
+  in
+  let returned = Secret.require_hardening available hard in
+  Alcotest.(check bool) "returns same secret" true (returned == hard);
+  Secret.destroy hard
 
 let test_pool_size_classes () =
   (* Released payload blocks are pooled per size class and handed back to the
@@ -504,9 +584,11 @@ let () =
           Alcotest.test_case "bigstring view" `Quick test_bigstring_view;
           Alcotest.test_case "init/random" `Quick test_init_random;
           Alcotest.test_case "with_secret" `Quick test_with_secret;
+          Alcotest.test_case "with_random" `Quick test_with_random;
           Alcotest.test_case "status default tier" `Quick
             test_status_default_tier;
           Alcotest.test_case "hardened" `Quick test_hardened;
+          Alcotest.test_case "require hardening" `Quick test_require_hardening;
           Alcotest.test_case "pool reuse" `Quick test_pool_reuse;
           Alcotest.test_case "pool size classes" `Quick test_pool_size_classes;
           Alcotest.test_case "scratch" `Quick test_scratch;
