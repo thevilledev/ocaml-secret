@@ -1,6 +1,15 @@
 name: Portability
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/portability.yml"
+      - "config/**"
+      - "src/**"
+      - "test/**"
+      - "unix/**"
+      - "dune-project"
+      - "secret.opam"
   workflow_dispatch:
   schedule:
     - cron: "17 5 * * 1"
@@ -16,8 +25,11 @@ jobs:
   musl:
     name: alpine (musl) / OCaml 5.4
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The ocaml/opam images run as the unprivileged `opam` user, which cannot
       # write the runner's state files when used as a job container; run the
       # image explicitly instead.
@@ -30,8 +42,11 @@ jobs:
   linux32:
     name: alpine i386 / OCaml 4.14 (32-bit)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The other jobs are all 64-bit, but the C stubs size several things off
       # `value`: the block-size arithmetic, the reuse pool's size classes (a
       # slot index that aliases two classes hands a short block to a longer
@@ -47,22 +62,23 @@ jobs:
             opam init --disable-sandboxing --bare
             opam switch create sys --packages=ocaml-system
             eval $(opam env --switch=sys)
-            opam install dune-configurator alcotest
-            dune build @install
-            dune exec test/test_secret.exe
-            dune exec test/test_c_api.exe
-            dune exec test/test_fork.exe'
+            opam install dune-configurator alcotest mirage-crypto
+            dune build @install @runtest'
 
   windows:
     name: windows-mingw / OCaml 5.4 (best effort)
     runs-on: windows-latest
+    if: github.event_name != 'pull_request'
     continue-on-error: true
+    timeout-minutes: 45
     defaults:
       run:
         # PowerShell would treat `@install` as its splatting operator.
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
         with:
           ocaml-compiler: "5.4"
@@ -72,9 +88,13 @@ jobs:
   solo5-cross:
     name: solo5 cross-build (best effort)
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
     continue-on-error: true
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
         with:
           ocaml-compiler: "5.4"

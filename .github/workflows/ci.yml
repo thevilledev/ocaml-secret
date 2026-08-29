@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 permissions:
@@ -16,7 +17,9 @@ jobs:
   test:
     name: ${{ matrix.os }} / OCaml ${{ matrix.ocaml }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -24,26 +27,66 @@ jobs:
             dependencies: --with-test
             targets: "@install @runtest"
             benchmarks: false
+            release-check: false
+            analyzer: false
           - os: ubuntu-latest
-            ocaml: "5.4"
-            dependencies: --with-test --with-doc
-            targets: "@install @runtest @doc"
-            benchmarks: true
-          - os: macos-latest
-            ocaml: "5.4"
+            ocaml: "5.0"
             dependencies: --with-test
             targets: "@install @runtest"
             benchmarks: false
+            release-check: false
+            analyzer: false
+          - os: ubuntu-latest
+            ocaml: "5.5"
+            dependencies: --with-test --with-doc
+            targets: "@install @runtest @doc"
+            benchmarks: true
+            release-check: true
+            analyzer: true
+          - os: macos-latest
+            ocaml: "5.5"
+            dependencies: --with-test
+            targets: "@install @runtest"
+            benchmarks: false
+            release-check: false
+            analyzer: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
         with:
           ocaml-compiler: ${{ matrix.ocaml }}
-      - run: opam install . --deps-only ${{ matrix.dependencies }}
-      - run: opam exec -- dune build ${{ matrix.targets }}
+      - if: matrix.release-check
+        name: Lint OPAM metadata
+        run: opam lint --strict secret.opam
+      - if: matrix.analyzer
+        name: Install Clang static analyzer
+        run: sudo apt-get update && sudo apt-get install --yes clang-tools
+      - name: Install dependencies
+        env:
+          OPAM_DEPENDENCIES: ${{ matrix.dependencies }}
+        run: opam install . --deps-only $OPAM_DEPENDENCIES --yes
+      - name: Build and test
+        env:
+          DUNE_TARGETS: ${{ matrix.targets }}
+        run: opam exec -- dune build $DUNE_TARGETS
+      - if: matrix.release-check
+        name: Install and test from a clean source archive
+        run: |
+          set -eu
+          archive_dir=$(mktemp -d)
+          git archive --format=tar HEAD | tar -xf - -C "$archive_dir"
+          cd "$archive_dir"
+          opam install . --with-test --with-doc --yes
       - if: matrix.benchmarks
-        name: Check constant-time equality
+        name: Run constant-time regression harness
         run: opam exec -- dune exec bench/ct_equal.exe -- 2000 50
       - if: matrix.benchmarks
         name: Check allocation behavior
         run: opam exec -- dune exec bench/alloc_bench.exe
+      - if: matrix.analyzer
+        name: Analyze C stubs
+        run: |
+          opam exec -- dune clean
+          scan-build --status-bugs opam exec -- dune build @install
