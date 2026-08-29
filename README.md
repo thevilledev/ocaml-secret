@@ -4,8 +4,9 @@
 explicit zeroization, constant-time equality, optional page hardening, and
 zero-copy views for existing `string` and `bytes` APIs.
 
-Status: 0.1.0, experimental. OCaml 4.14 and 5.0–5.5 are supported. CI covers
-Linux and macOS; Windows and solo5 builds are best effort.
+Status: 0.1.0 (unreleased), experimental, and unaudited. OCaml 4.14 and 5.0–5.5
+are supported. CI covers Linux and macOS; Windows and solo5 builds are best
+effort.
 
 Documentation: [ville.dev/ocaml-secret](https://ville.dev/ocaml-secret/).
 
@@ -25,6 +26,7 @@ let aes =
 - Hardened allocations request guard pages, page locking, and dump exclusion.
   `Secret.status` reports which protections succeeded; `require_hardening`
   destroys the secret and fails closed if selected protections are missing.
+  Hardening is disabled by default and must be requested per value.
 - `Secret_unix` reads and writes directly between file descriptors and secret
   memory.
 
