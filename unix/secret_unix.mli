@@ -11,6 +11,8 @@ val read : Unix.file_descr -> Secret.t -> off:int -> len:int -> int
     single [read(2)] (retried on [EINTR]) and returns the number of bytes read
     (0 at end of file). Raises [Unix.Unix_error] on I/O errors and
     [Invalid_argument] on bounds errors.
+    If {!Secret.wipe_all} runs while the read is blocked, bytes received after
+    the wipe are zeroized and [Secret.Destroyed] is raised.
     @raise Secret.Destroyed *)
 
 val read_exactly : Unix.file_descr -> Secret.t -> off:int -> len:int -> unit

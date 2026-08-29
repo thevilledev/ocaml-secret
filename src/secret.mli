@@ -317,9 +317,11 @@ val wipe_all : unit -> unit
     at module initialisation, so it runs after all handlers registered later
     (i.e. after every handler of code that uses this module). Does not run on
     [Unix._exit], signals or runtime fatal errors; call it from your own signal
-    handler if needed. Other domains using a secret at the same time observe
-    either {!Destroyed} or zeroed contents. To keep those in-flight accesses
-    memory-safe, wiped storage is released when its owning handle is finalized.
+    handler if needed. Safe operations that overlap the wipe either complete
+    before it or raise {!Destroyed}; writes into retired storage are zeroized
+    again before returning. To keep in-flight accesses memory-safe, wiped
+    storage is released when its owning handle is finalized. Raw values from
+    {!Unsafe} are outside this concurrency guarantee.
 *)
 
 val live_count : unit -> int
