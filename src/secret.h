@@ -55,6 +55,13 @@ int secret_borrow(value v, const unsigned char **p, size_t *len);
 int secret_borrow_string_or_secret(value v, const unsigned char **p,
                                    size_t *len);
 
+/* Complete a write through a pointer previously obtained from [v]. If
+   wipe_all destroyed [v] while the write was in flight, the retired payload
+   is zeroized again and 1 is returned. Returns 0 when the write completed
+   before destruction. This is primarily for C stubs that release the OCaml
+   runtime lock around a blocking operation. [v] must remain rooted. */
+int secret_rewipe_if_destroyed(value v, unsigned char *payload);
+
 /* Zeroize [n] bytes at [p] with a primitive the compiler cannot elide
    (explicit_bzero / memset_explicit / memset_s / SecureZeroMemory /
    volatile fallback). */

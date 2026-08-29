@@ -241,6 +241,26 @@ int secret_borrow_string_or_secret(value v, const unsigned char **p, size_t *len
   return secret_borrow(v, p, len);
 }
 
+int secret_rewipe_if_destroyed(value v, unsigned char *payload)
+{
+  struct secret_hdr *h = hdr_of(v);
+  int destroyed = 0;
+  if (h == NULL || payload == NULL) return 1;
+  /* This load is also the operation's linearization point when the payload is
+     still live: a later wipe necessarily runs after the completed write. */
+  if ((unsigned char *) atomic_load(&h->ptr) == payload) return 0;
+  secret_registry_lock();
+  if (atomic_load(&h->ptr) == 0) {
+    /* wipe_all retains storage until finalization. Explicit destroy is allowed
+       to release it immediately and is documented as invalid concurrently, so
+       only touch the payload when it is the retained allocation. */
+    if (h->retired == payload) secret_zeroize(payload, h->bsz - 1);
+    destroyed = 1;
+  }
+  secret_registry_unlock();
+  return destroyed;
+}
+
 /* ---- static empty string (returned by views of destroyed secrets) ------------ */
 
 static struct {
@@ -340,7 +360,7 @@ CAMLprim value secret_ml_fill(value v, value vc)
   unsigned char *p = live_payload(h);
   if (p == NULL) return Val_long(-1);
   memset(p, Int_val(vc), h->len);
-  return Val_long(0);
+  return Val_long(secret_rewipe_if_destroyed(v, p) ? -1 : 0);
 }
 
 CAMLprim value secret_ml_zero(value v)
@@ -349,7 +369,7 @@ CAMLprim value secret_ml_zero(value v)
   unsigned char *p = live_payload(h);
   if (p == NULL) return Val_long(-1);
   secret_zeroize(p, h->len);
-  return Val_long(0);
+  return Val_long(secret_rewipe_if_destroyed(v, p) ? -1 : 0);
 }
 
 /* blit src[soff..soff+len) -> dst[doff..doff+len); returns 0, -1 destroyed,
@@ -367,6 +387,8 @@ CAMLprim value secret_ml_blit(value vsrc, value vsoff, value vdst, value vdoff,
       doff > hd->len || len > hd->len - doff)
     return Val_long(-2);
   memmove(pd + doff, ps + soff, len);
+  if (secret_rewipe_if_destroyed(vdst, pd) || live_payload(hs) != ps)
+    return Val_long(-1);
   return Val_long(0);
 }
 
@@ -383,6 +405,7 @@ CAMLprim value secret_ml_blit_from_string(value vs, value vsoff, value vdst,
       soff > slen || len > slen - soff || doff > hd->len || len > hd->len - doff)
     return Val_long(-2);
   memmove(pd + doff, String_val(vs) + soff, len);
+  if (secret_rewipe_if_destroyed(vdst, pd)) return Val_long(-1);
   return Val_long(0);
 }
 
@@ -399,6 +422,10 @@ CAMLprim value secret_ml_blit_to_bytes(value vsrc, value vsoff, value vb,
       soff > hs->len || len > hs->len - soff || doff > blen || len > blen - doff)
     return Val_long(-2);
   memmove(Bytes_val(vb) + doff, ps + soff, len);
+  if (live_payload(hs) != ps) {
+    secret_zeroize(Bytes_val(vb) + doff, len);
+    return Val_long(-1);
+  }
   return Val_long(0);
 }
 
@@ -409,7 +436,11 @@ CAMLprim value secret_ml_equal(value va, value vb)
   unsigned char *pa = live_payload(ha), *pb = live_payload(hb);
   if (pa == NULL || pb == NULL) return Val_long(2);
   if (ha->len != hb->len) return Val_long(0);
-  return Val_long(secret_ct_equal(pa, pb, ha->len));
+  {
+    int r = secret_ct_equal(pa, pb, ha->len);
+    if (live_payload(ha) != pa || live_payload(hb) != pb) return Val_long(2);
+    return Val_long(r);
+  }
 }
 
 CAMLprim value secret_ml_equal_string(value va, value vs)
@@ -418,8 +449,11 @@ CAMLprim value secret_ml_equal_string(value va, value vs)
   unsigned char *pa = live_payload(ha);
   if (pa == NULL) return Val_long(2);
   if (ha->len != caml_string_length(vs)) return Val_long(0);
-  return Val_long(secret_ct_equal(pa, (const unsigned char *) String_val(vs),
-                                  ha->len));
+  {
+    int r = secret_ct_equal(pa, (const unsigned char *) String_val(vs), ha->len);
+    if (live_payload(ha) != pa) return Val_long(2);
+    return Val_long(r);
+  }
 }
 
 /* Zero-copy view as an OCaml string/bytes. The caller has checked that the

@@ -109,6 +109,16 @@
    %{lib-available:secret.unix}))
  (libraries secret secret.unix helpers alcotest unix))
 
+(test
+ (name test_wipe_races)
+ (modules test_wipe_races)
+ (enabled_if
+  (and
+   (<> %{os_type} Win32)
+   (>= %{ocaml_version} 5.0)
+   %{lib-available:secret.unix}))
+ (libraries secret secret.unix alcotest unix))
+
 (executable
  (name leak_scan)
  (modules leak_scan)
