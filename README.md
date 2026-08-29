@@ -4,8 +4,8 @@
 explicit zeroization, constant-time equality, optional page hardening, and
 zero-copy views for existing `string` and `bytes` APIs.
 
-Status: 0.1.0, experimental. OCaml 4.14 and 5.x are supported. CI covers Linux
-and macOS; Windows and solo5 builds are best effort.
+Status: 0.1.0, experimental. OCaml 4.14 and 5.0–5.5 are supported. CI covers
+Linux and macOS; Windows and solo5 builds are best effort.
 
 Documentation: [ville.dev/ocaml-secret](https://ville.dev/ocaml-secret/).
 
@@ -74,6 +74,10 @@ C stubs can include the installed `secret.h` header.
 opam install . --deps-only --with-test --with-doc
 dune build @install @runtest @doc
 ```
+
+The Mirage Crypto memory census is deliberately outside the package's normal
+test dependencies. Install `mirage-crypto` and run it explicitly with
+`SECRET_CENSUS=true dune build @census`.
 
 See [the leak census](docs/census.md) for measured process-memory copies. The
 constant-time and allocation harnesses are in `bench/`; the latest numbers are

@@ -161,7 +161,9 @@
 
       <p>
         Absence of evidence is not a proof of constant time. Run it on the
-        hardware you care about, unloaded; CI only checks that it runs.
+        hardware you care about, unloaded. Pull-request CI only checks that it
+        runs; the full harness runs on the scheduled and manual workflows and
+        remains informational because hosted runners are noisy.
       </p>
 
       <pre><code>dune exec bench/ct_equal.exe -- 20000 200</code></pre>
@@ -219,6 +221,15 @@
       </p>
 
       <pre><code>dune exec bench/alloc_bench.exe</code></pre>
+
+      <p>
+        This executable measures throughput; it does not enforce allocation
+        budgets. <code>bench/alloc_check.exe</code> separately asserts that the
+        equality, fill, zero, and blit hot paths do not allocate in the OCaml
+        heap after warm-up.
+      </p>
+
+      <pre><code>dune exec bench/alloc_check.exe</code></pre>
 
       <h2 id="reading">What to take from this</h2>
 

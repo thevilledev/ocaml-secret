@@ -1,3 +1,5 @@
+(data_only_dirs installed-consumer)
+
 (library
  (name helpers)
  (modules helpers)
@@ -112,6 +114,9 @@
 (executable
  (name leak_scan)
  (modules leak_scan)
+ (optional)
+ (enabled_if
+  (<> %{os_type} Win32))
  (libraries secret mirage-crypto)
  (foreign_stubs
   (language c)
@@ -119,8 +124,10 @@
   (include_dirs %{project_root}/src)))
 
 (rule
- (alias runtest)
+ (alias census)
  (enabled_if
-  (<> %{os_type} Win32))
+  (and
+   (<> %{os_type} Win32)
+   (= %{env:SECRET_CENSUS=false} true)))
  (action
   (run %{exe:leak_scan.exe})))

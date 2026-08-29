@@ -1,6 +1,8 @@
 name: Portability
 
 on:
+  push:
+    tags: ["v*"]
   pull_request:
     paths:
       - ".github/workflows/portability.yml"
@@ -32,9 +34,12 @@ jobs:
           persist-credentials: false
       # The ocaml/opam images run as the unprivileged `opam` user, which cannot
       # write the runner's state files when used as a job container; run the
-      # image explicitly instead.
+      # image explicitly instead. Alpine 3.24's musl 1.2.6 cannot allocate
+      # OCaml's signal stack on some AMX-capable hosted CPUs, so keep this on
+      # the last musl 1.2.5 image until that runtime combination is fixed.
       - run: |
-          docker run --rm -v "$PWD:/src" ocaml/opam:alpine-ocaml-5.4 sh -ec '
+          docker run --rm -v "$PWD:/src" \
+            ocaml/opam:alpine-3.23-ocaml-5.4@sha256:bf6b06d9c1634a8f9f4ed95f991887bb6d4942d1714a9c9797d1cf8fc3e8e5b7 sh -ec '
             sudo cp -r /src /work && sudo chown -R opam /work && cd /work
             export OPAMJOBS=2
             opam install . --deps-only --with-test -y
@@ -63,7 +68,7 @@ jobs:
             opam init --disable-sandboxing --bare
             opam switch create sys --packages=ocaml-system
             eval $(opam env --switch=sys)
-            opam install dune-configurator alcotest mirage-crypto
+            opam install dune-configurator alcotest
             dune build @install @runtest'
 
   windows:

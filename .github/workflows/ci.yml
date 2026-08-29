@@ -5,6 +5,9 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "43 4 * * 4"
 
 permissions:
   contents: read
@@ -24,32 +27,20 @@ jobs:
         include:
           - os: ubuntu-latest
             ocaml: "4.14"
-            dependencies: --with-test
-            targets: "@install @runtest"
-            benchmarks: false
-            release-check: false
-            analyzer: false
           - os: ubuntu-latest
             ocaml: "5.0"
-            dependencies: --with-test
-            targets: "@install @runtest"
-            benchmarks: false
-            release-check: false
-            analyzer: false
+          - os: ubuntu-latest
+            ocaml: "5.1"
+          - os: ubuntu-latest
+            ocaml: "5.2"
+          - os: ubuntu-latest
+            ocaml: "5.3"
+          - os: ubuntu-latest
+            ocaml: "5.4"
           - os: ubuntu-latest
             ocaml: "5.5"
-            dependencies: --with-test --with-doc
-            targets: "@install @runtest @doc"
-            benchmarks: true
-            release-check: true
-            analyzer: true
           - os: macos-latest
             ocaml: "5.5"
-            dependencies: --with-test
-            targets: "@install @runtest"
-            benchmarks: false
-            release-check: false
-            analyzer: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,22 +48,60 @@ jobs:
       - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
         with:
           ocaml-compiler: ${{ matrix.ocaml }}
-      - if: matrix.release-check
-        name: Lint OPAM metadata
-        run: opam lint --strict secret.opam
-      - if: matrix.analyzer
-        name: Install Clang static analyzer
-        run: sudo apt-get update && sudo apt-get install --yes clang-tools
       - name: Install dependencies
-        env:
-          OPAM_DEPENDENCIES: ${{ matrix.dependencies }}
-        run: opam install . --deps-only $OPAM_DEPENDENCIES --yes
+        run: opam install . --deps-only --with-test --yes
       - name: Build and test
-        env:
-          DUNE_TARGETS: ${{ matrix.targets }}
-        run: opam exec -- dune build $DUNE_TARGETS
-      - if: matrix.release-check
-        name: Install and test from a clean source archive
+        run: opam exec -- dune build @install @runtest
+
+  compiler-options:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: OCaml 5.4.1 / bytecode only
+            compiler: ocaml-variants.5.4.1+options,ocaml-option-bytecode-only
+          - name: OCaml 5.4.1 / Flambda
+            compiler: ocaml-variants.5.4.1+options,ocaml-option-flambda
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
+        with:
+          ocaml-compiler: ${{ matrix.compiler }}
+      - run: opam install . --deps-only --with-test --yes
+      - run: opam exec -- dune build @install @runtest
+
+  quality:
+    name: Formatting, metadata, docs, and installation
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
+        with:
+          ocaml-compiler: "5.5"
+      - name: Install dependencies
+        run: |
+          opam install . --deps-only --with-test --with-doc --yes
+          opam install ocamlformat --yes
+      - name: Verify generated OPAM metadata
+        run: |
+          opam exec -- dune build secret.opam
+          git diff --exit-code -- secret.opam
+          opam lint --strict secret.opam
+      - name: Build, test, document, and format-check
+        run: opam exec -- dune build @install @runtest @doc @fmt
+      - name: Run constant-time smoke test
+        run: opam exec -- dune exec bench/ct_equal.exe -- 2000 50
+      - name: Check hot-path allocations
+        run: opam exec -- dune exec bench/alloc_check.exe
+      - name: Install from a clean source archive
         run: |
           set -eu
           opam_switch=$(opam switch show)
@@ -80,14 +109,102 @@ jobs:
           git archive --format=tar HEAD | tar -xf - -C "$archive_dir"
           cd "$archive_dir"
           opam install . --switch="$opam_switch" --with-test --with-doc --yes
-      - if: matrix.benchmarks
-        name: Run constant-time regression harness
-        run: opam exec -- dune exec bench/ct_equal.exe -- 2000 50
-      - if: matrix.benchmarks
-        name: Check allocation behavior
-        run: opam exec -- dune exec bench/alloc_bench.exe
-      - if: matrix.analyzer
-        name: Analyze C stubs
+      - name: Test installed OCaml libraries and C header
         run: |
-          opam exec -- dune clean
-          scan-build --status-bugs opam exec -- dune build @install
+          set -eu
+          opam_switch=$(opam switch show)
+          consumer_dir=$(mktemp -d)
+          cp -R test/installed-consumer/. "$consumer_dir"
+          cd "$consumer_dir"
+          opam exec --switch="$opam_switch" -- dune build @all
+          opam exec --switch="$opam_switch" -- dune exec ./consumer.bc.exe
+          opam exec --switch="$opam_switch" -- dune exec ./consumer.exe
+      - name: Test package removal
+        run: |
+          opam remove secret --yes
+          if opam list --installed --short secret | grep -qx secret; then
+            exit 1
+          fi
+
+  sanitizers:
+    name: C stubs / ASan and UBSan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SECRET_SANITIZE: "1"
+      ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
+        with:
+          ocaml-compiler: "5.4"
+      - run: opam install . --deps-only --with-test --yes
+      - name: Build instrumented stubs
+        run: opam exec -- dune build @install
+      - name: Exercise allocator, views, C API, and Unix stubs
+        run: |
+          opam exec -- dune exec test/test_secret.exe
+          opam exec -- dune exec test/test_c_api.exe
+          opam exec -- dune exec test/test_unix.exe
+          opam exec -- dune exec test/test_unix_wipe.exe
+
+  census:
+    name: Optional Mirage Crypto memory census
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
+        with:
+          ocaml-compiler: "5.5"
+      - run: opam install . --deps-only --with-test --yes
+      - run: opam install mirage-crypto --yes
+      - run: opam exec -- env SECRET_CENSUS=true dune build @census
+
+  analyzer:
+    name: Clang static analyzer
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
+        with:
+          ocaml-compiler: "5.5"
+      - run: sudo apt-get update && sudo apt-get install --yes clang-tools
+      - run: opam install . --deps-only --yes
+      - run: scan-build --status-bugs opam exec -- dune build @install
+
+  timing:
+    name: Full informational timing and throughput harnesses
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
+        with:
+          ocaml-compiler: "5.5"
+      - run: opam install . --deps-only --yes
+      - name: Run full constant-time harness
+        run: opam exec -- dune exec bench/ct_equal.exe -- 20000 200 | tee timing.log
+      - name: Run throughput harness
+        run: opam exec -- dune exec bench/alloc_bench.exe | tee throughput.log
+      - name: Upload harness output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: secret-harness-${{ github.sha }}
+          path: |
+            timing.log
+            throughput.log

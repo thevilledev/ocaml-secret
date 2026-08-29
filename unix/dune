@@ -9,4 +9,9 @@
  (foreign_stubs
   (language c)
   (names secret_unix_stubs)
-  (include_dirs %{project_root}/src)))
+  (flags
+   (:standard
+    (:include ../src/cflags.sexp)))
+  (include_dirs %{project_root}/src))
+ (c_library_flags
+  (:include ../src/clibs.sexp)))

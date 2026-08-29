@@ -73,11 +73,16 @@ let test_concurrent_entropy_source_updates () =
     done
   in
   let setters =
-    [ Domain.spawn (setter 'a'); Domain.spawn (setter 'b');
-      Domain.spawn (setter 'c'); Domain.spawn (setter 'd') ]
+    [
+      Domain.spawn (setter 'a');
+      Domain.spawn (setter 'b');
+      Domain.spawn (setter 'c');
+      Domain.spawn (setter 'd');
+    ]
   in
   List.iter Domain.join setters;
-  Secret.set_entropy_source (fun buffer -> Bytes.fill buffer 0 (Bytes.length buffer) 'r')
+  Secret.set_entropy_source (fun buffer ->
+      Bytes.fill buffer 0 (Bytes.length buffer) 'r')
 
 let () =
   Alcotest.run "secret-domains"

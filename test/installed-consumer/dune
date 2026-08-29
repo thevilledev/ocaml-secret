@@ -1,0 +1,7 @@
+(executable
+ (name consumer)
+ (modes byte_complete exe)
+ (libraries secret secret.unix unix)
+ (foreign_stubs
+  (language c)
+  (names consumer_stubs)))
