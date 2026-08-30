@@ -13,9 +13,10 @@ opam update
 opam show secret
 ```
 
-Replace `unreleased` in `CHANGES.md` with the actual publication date. Confirm
+Replace `unreleased` in `CHANGES.md` with the actual publication date and remove
+the release-state markers from `README.md` and `website/index.html`. Confirm
 that `dune-project` and generated `secret.opam` both say `0.1.0`, then commit
-that date-only release change.
+that release-state-only change.
 
 ## 2. Validate the exact commit
 

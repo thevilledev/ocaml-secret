@@ -4,9 +4,8 @@
 explicit zeroization, constant-time equality, optional page hardening, and
 zero-copy views for existing `string` and `bytes` APIs.
 
-Status: 0.1.0 (unreleased), experimental, and unaudited. OCaml 4.14 and 5.0–5.5
-are supported. CI covers Linux and macOS; Windows and solo5 builds are best
-effort.
+Status: 0.1.0, experimental, and unaudited. OCaml 4.14 and 5.0–5.5 are
+supported. CI covers Linux and macOS; Windows and solo5 builds are best effort.
 
 Documentation: [ville.dev/ocaml-secret](https://ville.dev/ocaml-secret/).
 
