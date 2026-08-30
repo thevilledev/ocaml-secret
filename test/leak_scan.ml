@@ -42,6 +42,24 @@ let scan_now ~reference ~excl name =
 let both (v, w) = total v + total w
 let verbatim (v, _) = total v
 
+(* Keep the destroyed allocation mapped through an intentionally retained
+   unscoped view. This lets the census distinguish zeroization from merely
+   unmapping or freeing the payload. The view is used only by this probe. *)
+let destruction_probe ~reference =
+  print_endline "Destroy probe (retained storage stays mapped)";
+  let victim = Secret.copy reference in
+  let retained = Secret.Unsafe.string_view victim in
+  let live = scan_now ~reference ~excl:[] "before Secret.destroy" in
+  Secret.destroy victim;
+  let destroyed = scan_now ~reference ~excl:[] "after Secret.destroy" in
+  let rec all_zero i =
+    i = String.length retained || (retained.[i] = '\000' && all_zero (i + 1))
+  in
+  let zeroed = all_zero 0 in
+  ignore (Sys.opaque_identity retained);
+  print_newline ();
+  (live, destroyed, zeroed)
+
 (* One scenario: make a key from a fresh working secret, run traffic, then
    observe the residue at each step. Returns (live, dropped, scrubbed, destroyed). *)
 let scenario ~reference ~title ~traffic ~mk_key =
@@ -91,18 +109,20 @@ let () =
     "schedule stores the key). Copies inside Secret.t payloads are excluded.\n";
   let h0 = scan_now ~reference ~excl:[] "0. key held only in Secret.t" in
   print_newline ();
+  let destroy_live, destroy_after, destroy_zeroed =
+    destruction_probe ~reference
+  in
   let a_small =
     scenario ~reference ~traffic:(mib 1)
-      ~title:
-        "A. view: AES.GCM.of_secret (Secret.Unsafe.string_view k), schedule \
-         dies young" ~mk_key:(fun w ->
-        Mirage_crypto.AES.GCM.of_secret (Secret.Unsafe.string_view w))
+      ~title:"A. scoped view: AES.GCM.of_secret, schedule dies young"
+      ~mk_key:(fun w ->
+        Secret.Unsafe.with_string_view w Mirage_crypto.AES.GCM.of_secret)
   in
   let a_large =
     scenario ~reference ~traffic:(mib 8)
-      ~title:"A'. view: same, schedule promoted to the major heap"
+      ~title:"A'. scoped view: same, schedule promoted to the major heap"
       ~mk_key:(fun w ->
-        Mirage_crypto.AES.GCM.of_secret (Secret.Unsafe.string_view w))
+        Secret.Unsafe.with_string_view w Mirage_crypto.AES.GCM.of_secret)
   in
   let b =
     scenario ~reference ~traffic:(mib 8)
@@ -116,6 +136,9 @@ let () =
   let _, dropped_b, _, destroyed_b = b in
   let live_b, _, _, _ = b in
   let c1 = both h0 = 0 in
+  let c_destroy =
+    verbatim destroy_live > 0 && both destroy_after = 0 && destroy_zeroed
+  in
   (* The AES key schedule itself contains the key: verbatim with AES-NI,
      byte-swapped per word with the generic implementation. So "no copy of the
      raw key" is demonstrated relative to the baseline, which additionally
@@ -126,6 +149,9 @@ let () =
   let c5 = verbatim dropped_b > 0 && verbatim destroyed_b > 0 in
   Printf.printf "Checks:\n";
   Printf.printf "  key only in Secret.t -> 0 copies: %s\n" (ok c1);
+  Printf.printf
+    "  destroy: retained payload changes from key bytes to all zeroes: %s\n"
+    (ok c_destroy);
   Printf.printf
     "  view: fewer verbatim copies than the baseline (no of_secret argument \
      string): %s\n"
@@ -138,4 +164,4 @@ let () =
     (ok c4);
   Printf.printf
     "  baseline: a heap-string key is never erased by the runtime: %s\n" (ok c5);
-  if not (c1 && c2 && c3 && c5) then exit 1
+  if not (c1 && c_destroy && c2 && c3 && c5) then exit 1

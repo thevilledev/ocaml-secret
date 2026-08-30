@@ -123,6 +123,23 @@
   (names leak_scan_stubs)
   (include_dirs %{project_root}/src)))
 
+(executable
+ (name mirage_crypto_consumer)
+ (modules mirage_crypto_consumer)
+ (optional)
+ (libraries secret mirage-crypto))
+
+(rule
+ (alias mirage-crypto-proof)
+ (enabled_if
+  (and
+   (<> %{os_type} Win32)
+   (= %{env:SECRET_MIRAGE_CRYPTO=false} true)))
+ (action
+  (progn
+   (run %{exe:mirage_crypto_consumer.exe})
+   (run %{exe:leak_scan.exe}))))
+
 (rule
  (alias census)
  (enabled_if

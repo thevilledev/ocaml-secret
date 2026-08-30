@@ -14,3 +14,5 @@
 - Define concurrent reads as supported while requiring caller synchronization
   for mutation, destruction, process-wide wiping, and blocking I/O.
 - Install `secret.h` for C consumers.
+- Add an executable Mirage Crypto adoption proof covering AES and ChaCha20
+  migration semantics, known-answer compatibility, and process-memory residue.

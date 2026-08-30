@@ -78,11 +78,15 @@ dune build @install @runtest @doc
 ```
 
 The Mirage Crypto memory census is deliberately outside the package's normal
-test dependencies. Install `mirage-crypto` and run it explicitly with
-`SECRET_CENSUS=true dune build @census`.
+test dependencies. Install `mirage-crypto.2.4.0` and run it explicitly with
+`SECRET_MIRAGE_CRYPTO=true dune build @mirage-crypto-proof` for the downstream
+compatibility checks and census, or `SECRET_CENSUS=true dune build @census` for
+the census alone.
 
-See [the leak census](docs/census.md) for measured process-memory copies. The
-constant-time and allocation harnesses are in `bench/`; the latest numbers are
-on the [benchmarks page](https://ville.dev/ocaml-secret/benchmarks.html).
+See [the Mirage Crypto migration](docs/mirage-crypto-migration.md) for the
+adoption path and [the leak census](docs/census.md) for measured process-memory
+copies. The constant-time and allocation harnesses are in `bench/`; the latest
+numbers are on the
+[benchmarks page](https://ville.dev/ocaml-secret/benchmarks.html).
 
 ISC licensed.
