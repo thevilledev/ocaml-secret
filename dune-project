@@ -19,5 +19,5 @@ This experimental pre-1.0 implementation has not received an independent securit
  (tags (security cryptography memory))
  (depends
   (ocaml (and (>= 4.14.0) (< 5.6)))
-  dune-configurator
+  (dune-configurator (>= 3.8))
   (alcotest (and :with-test (>= 1.7.0)))))

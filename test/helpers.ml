@@ -10,8 +10,16 @@ external is_secret : 'a -> bool = "helper_is_secret"
 external block_size : int -> int = "helper_block_size"
 external pool_slot : int -> int = "helper_pool_slot"
 
-(* Run [exe args] and return (exit status, stdout lines). *)
+(* Run [exe args] and return (exit status, stdout lines).
+
+   [Unix.create_process] resolves a bare name through PATH, and dune before
+   3.24 expands [%{exe:...}] to just the basename, so qualify it here. *)
 let run_child exe args =
+  let exe =
+    if Filename.is_implicit exe then
+      Filename.concat Filename.current_dir_name exe
+    else exe
+  in
   let rd, wr = Unix.pipe () in
   let pid =
     Unix.create_process exe

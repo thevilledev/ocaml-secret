@@ -87,20 +87,21 @@
   (<> %{os_type} Win32))
  (deps %{exe:test_mlock_limit.exe})
  (action
-  (run sh -c "ulimit -l 0 && %{exe:test_mlock_limit.exe}")))
+  ; dune before 3.24 expands %{exe:...} to a bare basename, which sh then
+  ; looks up through PATH and fails to find; name the path explicitly.
+  (run sh -c "ulimit -l 0 && exec ./test_mlock_limit.exe")))
+
+; Gated rather than selected: dune before 3.15 rejects a (select) target
+; named in (modules), and this matches how test_unix_wipe is gated.
 
 (test
  (name test_unix)
- (modules test_unix test_unix_impl)
- (libraries
-  secret
-  alcotest
-  unix
-  (select
-   test_unix_impl.ml
-   from
-   (secret.unix -> test_unix_impl.posix.ml)
-   (-> test_unix_impl.skip.ml))))
+ (modules test_unix)
+ (enabled_if
+  (and
+   (<> %{os_type} Win32)
+   %{lib-available:secret.unix}))
+ (libraries secret secret.unix alcotest unix))
 
 (test
  (name test_unix_wipe)
