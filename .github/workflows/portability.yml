@@ -47,7 +47,11 @@ jobs:
 
   linux32:
     name: alpine i386 / OCaml 4.14 (32-bit)
-    runs-on: avrea-ubuntu-latest
+    # Stays on a GitHub-hosted runner. The Avrea runner kernel cannot exec
+    # 32-bit binaries, so `--platform linux/386` pulls and then dies with
+    # "exec format error"; qemu would emulate away the faulting behaviour
+    # this job exists to check.
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
