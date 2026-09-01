@@ -12,13 +12,14 @@
 
 module C = Configurator.V1
 
-let probe c ~c_flags ~name ~includes ~body =
+let probe c ~c_flags ~name ~prelude ~includes ~body =
   let includes = "stddef.h" :: "stdlib.h" :: includes in
   let includes =
     String.concat "\n" (List.map (Printf.sprintf "#include <%s>") includes)
   in
   let src =
-    Printf.sprintf "%s\nint main(void) { %s return 0; }\n" includes body
+    Printf.sprintf "%s\n%s\nint main(void) { %s return 0; }\n" prelude includes
+      body
   in
   (* Probe with exactly the flags the stubs are compiled with: feature macros
      such as _GNU_SOURCE change what the system headers declare. *)
@@ -73,7 +74,8 @@ let () =
           ]
           @ sanitizer_flags
       in
-      let probe = probe c ~c_flags:cflags in
+      let probe_prelude = probe c ~c_flags:cflags in
+      let probe = probe_prelude ~prelude:"" in
       let probes =
         if freestanding then []
         else if win32 then
@@ -95,7 +97,13 @@ let () =
               ~body:"char b[8]; explicit_bzero(b, sizeof b);";
             probe ~name:"SECRET_HAVE_EXPLICIT_MEMSET" ~includes:[ "string.h" ]
               ~body:"char b[8]; explicit_memset(b, 0, sizeof b);";
-            probe ~name:"SECRET_HAVE_MEMSET_S" ~includes:[ "string.h" ]
+            (* memset_s is declared only under __STDC_WANT_LIB_EXT1__ (C11
+               Annex K), defined before <string.h> as secret_zero.c does;
+               without it the probe fails on macOS and the build silently
+               falls back to volatile-memset. *)
+            probe_prelude ~name:"SECRET_HAVE_MEMSET_S"
+              ~prelude:"#define __STDC_WANT_LIB_EXT1__ 1"
+              ~includes:[ "string.h" ]
               ~body:"char b[8]; (void)memset_s(b, sizeof b, 0, sizeof b);";
             probe ~name:"SECRET_HAVE_GETRANDOM" ~includes:[ "sys/random.h" ]
               ~body:"unsigned char b[8]; (void)getrandom(b, sizeof b, 0);";
