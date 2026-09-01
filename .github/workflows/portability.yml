@@ -26,7 +26,7 @@ concurrency:
 jobs:
   musl:
     name: alpine (musl) / OCaml 5.4
-    runs-on: ubuntu-latest
+    runs-on: avrea-ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,7 +47,7 @@ jobs:
 
   linux32:
     name: alpine i386 / OCaml 4.14 (32-bit)
-    runs-on: ubuntu-latest
+    runs-on: avrea-ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -73,7 +73,7 @@ jobs:
 
   windows:
     name: windows-mingw / OCaml 5.4 (best effort)
-    runs-on: windows-latest
+    runs-on: avrea-windows-2025-4-vcpu
     if: github.event_name != 'pull_request'
     continue-on-error: true
     timeout-minutes: 45
@@ -93,7 +93,7 @@ jobs:
 
   solo5-cross:
     name: solo5 cross-build (best effort)
-    runs-on: ubuntu-latest
+    runs-on: avrea-ubuntu-latest
     if: github.event_name != 'pull_request'
     continue-on-error: true
     timeout-minutes: 45
