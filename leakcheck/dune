@@ -1,0 +1,22 @@
+; Scenario programs for external memory tools (valgrind, macOS leaks,
+; sanitizers). Each models a realistic consumer and must run leak-free:
+; the library keeps pooled and parked storage reachable, so any block a
+; leak checker reports as lost is a bug. CI runs them under valgrind in
+; both runtimes; the bytecode runtime is the memcheck gate because the
+; native runtime's stack switching produces false positives.
+
+(executables
+ (names churn views hardened_fork gc_finalize)
+ (modules churn views hardened_fork gc_finalize)
+ (modes exe byte_complete)
+ (libraries secret unix))
+
+; Gated exactly like the secret.unix library it depends on.
+
+(executable
+ (name unix_io)
+ (modules unix_io)
+ (modes exe byte_complete)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (libraries secret secret.unix unix))

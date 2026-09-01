@@ -150,6 +150,55 @@ jobs:
           opam exec -- dune exec test/test_c_api.exe
           opam exec -- dune exec test/test_unix.exe
           opam exec -- dune exec test/test_unix_wipe.exe
+      - name: Exercise leak scenarios under the sanitizers
+        run: |
+          for s in churn views hardened_fork unix_io gc_finalize; do
+            opam exec -- dune exec leakcheck/$s.exe
+          done
+
+  leakcheck:
+    name: Leak scenarios / valgrind
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c # v3.7.2
+        with:
+          ocaml-compiler: "5.5"
+      - run: sudo apt-get update && sudo apt-get install --yes valgrind
+      - run: opam install . --deps-only --yes
+      - name: Build scenarios
+        run: opam exec -- dune build leakcheck
+      # The native runtime's stack switching makes memcheck report false
+      # invalid accesses inside caml_* frames, so the native pass gates only
+      # the leak summary: the library must retain memory reachably.
+      - name: Valgrind leak gate (native runtime)
+        run: |
+          set -eu
+          for s in churn views hardened_fork unix_io gc_finalize; do
+            echo "=== $s"
+            out=$(valgrind --leak-check=full \
+              --show-leak-kinds=definite,possible \
+              --child-silent-after-fork=yes \
+              _build/default/leakcheck/$s.exe 2>&1)
+            echo "$out" | grep -E "lost:|done"
+            echo "$out" | grep -q "definitely lost: 0 bytes in 0 blocks"
+            echo "$out" | grep -q "possibly lost: 0 bytes in 0 blocks"
+          done
+      # The bytecode runtime is an ordinary C program, so this pass gates
+      # every memcheck error in the stubs as well as the leak kinds.
+      - name: Valgrind memcheck gate (bytecode runtime)
+        run: |
+          set -eu
+          for s in churn views hardened_fork unix_io gc_finalize; do
+            echo "=== $s"
+            valgrind --error-exitcode=1 --leak-check=full \
+              --errors-for-leak-kinds=definite,possible \
+              --child-silent-after-fork=yes \
+              _build/default/leakcheck/$s.bc.exe
+          done
 
   census:
     name: Mirage Crypto downstream proof

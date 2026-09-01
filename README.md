@@ -82,6 +82,12 @@ test dependencies. Install `mirage-crypto.2.4.0` and run it explicitly with
 compatibility checks and census, or `SECRET_CENSUS=true dune build @census` for
 the census alone.
 
+`leakcheck/` holds scenario programs for external memory tools: the library
+must hold pooled and permanently retained storage reachably, so a leak checker
+reporting lost blocks is a bug. CI gates them under valgrind on both runtimes;
+on macOS run `leaks --atExit -- _build/default/leakcheck/views.exe` (set
+`LEAKCHECK_NO_FORK=1` for the fork scenario).
+
 See [the Mirage Crypto migration](docs/mirage-crypto-migration.md) for the
 adoption path and [the leak census](docs/census.md) for measured process-memory
 copies. The constant-time and allocation harnesses are in `bench/`; the latest
