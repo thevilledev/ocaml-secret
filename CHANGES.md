@@ -1,5 +1,18 @@
 # Changes
 
+## 0.1.1 (2026-09-01)
+
+- Build on the whole declared dune range. 0.1.0 required dune 3.24 even
+  though it depends on `dune >= 3.8`: dune before 3.15 rejects a `select`
+  target that is also named in `modules`, and older dune expands
+  `%{exe:...}` to a bare basename, which the tests then failed to resolve.
+- Require `dune-configurator` 3.8 or later; it previously had no lower
+  bound.
+- Run the exit-time zeroization tests on Windows.
+
+The library itself is unchanged: `src/` and `unix/` are identical to 0.1.0,
+and this release fixes only packaging metadata and the test suite.
+
 ## 0.1.0 (2026-09-01)
 
 - Add out-of-heap secret buffers with explicit destruction, finalization, and
