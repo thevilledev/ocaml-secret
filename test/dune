@@ -41,17 +41,14 @@
  (modules guard_child)
  (libraries secret helpers))
 
-; Excluded on Win32 because Helpers.run_child cannot capture the child's
-; stdout there, which every case reads; the wipe behaviour itself is not
-; platform specific. The 5.0 bound is for Domain.spawn.
+; Runs on Windows now that Helpers.run_child captures the child's stdout
+; through a file rather than a pipe. The 5.0 bound is for Domain.spawn.
 
 (test
  (name test_atexit)
  (modules test_atexit)
  (enabled_if
-  (and
-   (<> %{os_type} Win32)
-   (>= %{ocaml_version} 5.0)))
+  (>= %{ocaml_version} 5.0))
  (deps %{exe:atexit_child.exe})
  (action
   (setenv
