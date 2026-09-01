@@ -237,14 +237,23 @@ let test_unscoped_view_never_reused () =
   let t = s_of "parked-secret" in
   let view = Secret.Unsafe.string_view t in
   let pooled_before_destroy = Secret.pool_count () in
+  let parked_before_destroy = Secret.parked_count () in
   Secret.destroy t;
   Alcotest.(check int)
     "viewed allocation not pooled" pooled_before_destroy (Secret.pool_count ());
+  Alcotest.(check int)
+    "viewed allocation parked"
+    (parked_before_destroy + 1)
+    (Secret.parked_count ());
   for _ = 1 to 1_000 do
     let replacement = Secret.create 13 in
     Secret.fill replacement 'x';
     Secret.destroy replacement
   done;
+  Alcotest.(check int)
+    "unviewed destroys are not parked"
+    (parked_before_destroy + 1)
+    (Secret.parked_count ());
   Alcotest.(check string) "stale view never reused" (String.make 13 '\000') view
 
 let test_bigstring_view () =

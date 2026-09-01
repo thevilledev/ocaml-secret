@@ -375,6 +375,13 @@ val live_count : unit -> int
 val pool_count : unit -> int
 (** Number of released payload blocks held in the reuse pool (diagnostics). *)
 
+val parked_count : unit -> int
+(** Number of destroyed payload blocks that had produced an unscoped view and
+    are therefore permanently retained (diagnostics). The library keeps parked
+    and pooled storage reachable, so memory-leak tools report it as reachable
+    memory rather than as a leak; this counter is how to observe the
+    process-lifetime cost of retained unscoped views. *)
+
 val set_entropy_source : (bytes -> unit) -> unit
 (** Fallback generator used by {!random} when [(capabilities ()).os_random] is
     [false] (MirageOS). The callback must fill the whole buffer, which is a

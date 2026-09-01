@@ -119,6 +119,7 @@ int secret_get_fork_policy(void);
 void secret_bump_fork_generation(void);
 uint32_t secret_fork_generation_now(void);
 size_t secret_pool_count(void);
+size_t secret_parked_count(void);
 
 /* Reuse-pool size-class mapping. Exposed (not installed) so the test suite can
    check that distinct block sizes never share a slot. */

@@ -565,6 +565,12 @@ CAMLprim value secret_ml_pool_count(value unit)
   return Val_long((long) secret_pool_count());
 }
 
+CAMLprim value secret_ml_parked_count(value unit)
+{
+  (void) unit;
+  return Val_long((long) secret_parked_count());
+}
+
 CAMLprim value secret_ml_capabilities(value unit)
 {
   (void) unit;

@@ -42,6 +42,7 @@ external is_young_c : bytes -> bool = "secret_ml_is_young" [@@noalloc]
 external wipe_all_c : unit -> unit = "secret_ml_wipe_all" [@@noalloc]
 external live_count_c : unit -> int = "secret_ml_live_count" [@@noalloc]
 external pool_count_c : unit -> int = "secret_ml_pool_count" [@@noalloc]
+external parked_count_c : unit -> int = "secret_ml_parked_count" [@@noalloc]
 external capabilities_c : unit -> int = "secret_ml_capabilities" [@@noalloc]
 external page_size_c : unit -> int = "secret_ml_page_size" [@@noalloc]
 external zeroize_name_c : unit -> string = "secret_ml_zeroize_name"
@@ -466,6 +467,7 @@ end
 let wipe_all () = wipe_all_c ()
 let live_count () = live_count_c ()
 let pool_count () = pool_count_c ()
+let parked_count () = parked_count_c ()
 
 let set_fork_policy p =
   set_fork_policy_c (match p with `Keep -> false | `Wipe_in_child -> true)

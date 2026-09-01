@@ -142,38 +142,49 @@ static size_t pool_a_slot_counts[POOL_SLOTS];
 static size_t pool_b_slot_counts[POOL_SLOTS];
 static size_t pool_a_count = 0, pool_b_count = 0;
 
-#define Link_slot(payload) ((unsigned char **) ((payload) - 16))
+/* Cached and parked blocks are linked through the first word of the block
+   prefix and identified by the prefix address, not the payload address. For
+   tier (a) the prefix is the start of the calloc allocation, so every block
+   the library retains stays reachable through a pointer to its allocation
+   base: leak checkers (valgrind, macOS leaks, LeakSanitizer) report the
+   pool and the parked set as reachable memory instead of leaks. Tier (b)
+   prefixes point into the mapping; malloc-level tools do not track mmap, so
+   only the uniform chaining matters there. */
+#define Pool_base(payload) ((payload) - SECRET_PREFIX_BYTES)
+#define Pool_next(base) (*(unsigned char **) (base))
 
 static unsigned char *pool_pop(unsigned char **pool, size_t *slot_counts,
                                size_t *count, size_t bsz)
 {
   size_t idx = secret_pool_slot(bsz);
-  unsigned char *p = NULL;
+  unsigned char *base = NULL;
   if (idx < POOL_SLOTS) {
     secret_registry_lock();
-    p = pool[idx];
-    if (p) {
-      pool[idx] = *Link_slot(p);
+    base = pool[idx];
+    if (base) {
+      pool[idx] = Pool_next(base);
       slot_counts[idx]--;
       (*count)--;
     }
     secret_registry_unlock();
   }
-  if (p) *Link_slot(p) = NULL;
-  return p;
+  if (base == NULL) return NULL;
+  Pool_next(base) = NULL;
+  return base + SECRET_PREFIX_BYTES;
 }
 
 static int pool_push(unsigned char **pool, size_t *slot_counts, size_t *count,
                      size_t bsz, unsigned char *payload)
 {
   size_t idx = secret_pool_slot(bsz);
+  unsigned char *base = Pool_base(payload);
   int inserted = 0;
   /* caller guarantees idx < POOL_SLOTS */
   secret_registry_lock();
   if (*count < SECRET_POOL_MAX_COUNT &&
       slot_counts[idx] < SECRET_POOL_MAX_PER_CLASS) {
-    *Link_slot(payload) = pool[idx];
-    pool[idx] = payload;
+    Pool_next(base) = pool[idx];
+    pool[idx] = base;
     slot_counts[idx]++;
     (*count)++;
     inserted = 1;
@@ -192,10 +203,32 @@ size_t secret_pool_count(void)
 }
 
 /* Every viewed block stays mapped forever so an escaped view remains valid
-   and can never disclose another secret. */
+   and can never disclose another secret. The blocks are chained like the
+   pool so the retention is reachable memory with a diagnostic count, not an
+   unreferenced allocation that valgrind or macOS leaks reports as a leak.
+   The chain reuses the prefix word: the OCaml header at payload - 8 stays
+   intact for stale views, and the tier (b) canary in that slot is never
+   checked again once the payload pointer is gone. */
+static unsigned char *parked_head = NULL;
+static size_t parked_total = 0;
+
 static void park_forever(unsigned char *payload)
 {
-  (void) payload; /* intentionally leaked: stays mapped and zero */
+  unsigned char *base = Pool_base(payload);
+  secret_registry_lock();
+  Pool_next(base) = parked_head;
+  parked_head = base;
+  parked_total++;
+  secret_registry_unlock();
+}
+
+size_t secret_parked_count(void)
+{
+  size_t count;
+  secret_registry_lock();
+  count = parked_total;
+  secret_registry_unlock();
+  return count;
 }
 
 /* ---- tier (a) ------------------------------------------------------------ */

@@ -59,6 +59,7 @@ let test_finalizer_releases () =
 let test_finalizer_zeroes () =
   (* A view outlives its owner; after the owner is collected the view must
      read as zeros and its parked block must never be reused. *)
+  let parked_before = Secret.parked_count () in
   let view =
     let t = Secret.of_string "finalize-me-please" in
     Secret.Unsafe.string_view t
@@ -66,6 +67,8 @@ let test_finalizer_zeroes () =
   Gc.full_major ();
   Gc.full_major ();
   Alcotest.(check string) "zeroed by finalizer" (String.make 18 '\000') view;
+  Alcotest.(check int)
+    "parked by finalizer" (parked_before + 1) (Secret.parked_count ());
   for _ = 1 to 1_000 do
     let replacement = Secret.create 18 in
     Secret.fill replacement 'x';

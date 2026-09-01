@@ -10,7 +10,9 @@
 - Add scratch buffers, minor-heap scrubbing, process hardening, and direct Unix
   file-descriptor I/O.
 - Keep owners alive for scoped views and permanently retain destroyed unscoped
-  view storage so it can never expose a later secret.
+  view storage so it can never expose a later secret. Retained and pooled
+  blocks stay reachable, so leak checkers report them as reachable memory,
+  and `parked_count` reports how many blocks are permanently retained.
 - Define concurrent reads as supported while requiring caller synchronization
   for mutation, destruction, process-wide wiping, and blocking I/O.
 - Install `secret.h` for C consumers.
