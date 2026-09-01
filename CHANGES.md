@@ -1,6 +1,6 @@
 # Changes
 
-## 0.1.0 (2026-08-30)
+## 0.1.0 (2026-09-01)
 
 - Add out-of-heap secret buffers with explicit destruction, finalization, and
   exit-time zeroization.
