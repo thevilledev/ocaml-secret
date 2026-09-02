@@ -1,5 +1,14 @@
 # Changes
 
+## 0.1.2 (2026-09-02)
+
+- Remove the upper bound on the OCaml version. It excluded every release
+  from 5.6 onwards without a known incompatibility, which is what
+  opam-repository asks packages not to do.
+
+Otherwise documentation only: the README gained the header diagram. No
+library code changed from 0.1.1.
+
 ## 0.1.1 (2026-09-01)
 
 - Build on the whole declared dune range. 0.1.0 required dune 3.24 even

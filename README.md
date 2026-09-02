@@ -6,7 +6,7 @@
 explicit zeroization, constant-time equality, optional page hardening, and
 zero-copy views for existing `string` and `bytes` APIs.
 
-Status: 0.1.1, experimental, and unaudited. OCaml 4.14 and 5.x are supported;
+Status: 0.1.2, experimental, and unaudited. OCaml 4.14 and 5.x are supported;
 CI covers 4.14 and every 5.0–5.5 minor on Linux and macOS, and Windows and
 solo5 builds are best effort.
 
