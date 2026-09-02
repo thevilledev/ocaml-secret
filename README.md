@@ -1,5 +1,7 @@
 # secret
 
+![A Secret.t handle in the OCaml heap owning a payload outside it: guard pages around an OCaml string header and the key bytes, zeroized by destroy, exit and GC](docs/header.svg)
+
 `Secret.t` stores fixed-length secret data outside the OCaml heap. It supports
 explicit zeroization, constant-time equality, optional page hardening, and
 zero-copy views for existing `string` and `bytes` APIs.
