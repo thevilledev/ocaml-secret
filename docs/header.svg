@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 610 160" width="610" height="160" role="img" aria-labelledby="secret-banner-title">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-14 -14 638 188" width="638" height="188" role="img" aria-labelledby="secret-banner-title">
   <title id="secret-banner-title">A Secret.t handle inside the OCaml heap owns a payload outside it: guard pages around an OCaml string header and the key bytes. Destroy, exit and collection all zeroize the key bytes.</title>
   <style>
     svg { color: #1f2328; }
-    @media (prefers-color-scheme: dark) { svg { color: #e6edf3; } }
   </style>
+  <rect x="-14" y="-14" width="638" height="188" rx="6" fill="#ffffff"/>
   <defs>
     <marker id="secret-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
