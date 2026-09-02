@@ -18,6 +18,6 @@ zeroization, constant-time equality, optional page hardening, and zero-copy view
 This experimental pre-1.0 implementation has not received an independent security audit.")
  (tags (security cryptography memory))
  (depends
-  (ocaml (and (>= 4.14.0) (< 5.6)))
+  (ocaml (>= 4.14.0))
   (dune-configurator (>= 3.8))
   (alcotest (and :with-test (>= 1.7.0)))))

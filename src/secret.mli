@@ -261,7 +261,7 @@ val unsafe_to_string : t -> string
     polymorphic [compare]/[=], [Hashtbl.hash] and [Marshal] treat a view as a
     foreign pointer (address comparison, [Marshal] fails). [String.equal], every
     [String]/[Bytes] function and C stubs using [String_val] work the same on
-    4.14 and supported 5.0–5.5 releases. *)
+    4.14 and on the 5.x releases CI covers. *)
 module Unsafe : sig
   val init : ?hardened:bool -> int -> (bytes -> unit) -> t
   (** Zero-copy variant of {!init}. The callback receives a mutable view of the
