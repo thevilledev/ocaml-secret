@@ -26,7 +26,7 @@ concurrency:
 jobs:
   musl:
     name: alpine (musl) / OCaml 5.4
-    runs-on: avrea-ubuntu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,10 +47,6 @@ jobs:
 
   linux32:
     name: alpine i386 / OCaml 4.14 (32-bit)
-    # Stays on a GitHub-hosted runner. The Avrea runner kernel cannot exec
-    # 32-bit binaries, so `--platform linux/386` pulls and then dies with
-    # "exec format error"; qemu would emulate away the faulting behaviour
-    # this job exists to check.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -77,7 +73,7 @@ jobs:
 
   windows:
     name: windows-mingw / OCaml 5.4 (best effort)
-    runs-on: avrea-windows-2025-4-vcpu
+    runs-on: windows-latest
     # Runs on the path-filtered pull_request trigger too: skipping it there
     # meant Windows regressions only surfaced after merge. Still best effort
     # until the suite has proven stable there.
@@ -99,7 +95,7 @@ jobs:
 
   solo5-cross:
     name: solo5 cross-build (best effort)
-    runs-on: avrea-ubuntu-latest
+    runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
     continue-on-error: true
     timeout-minutes: 45
