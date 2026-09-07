@@ -2,9 +2,10 @@
 
     [Unix.read] copies through a 64 KiB buffer on the C stack and [In_channel]
     through a 64 KiB heap-allocated channel buffer; neither copy is ever
-    zeroized. The functions here call [read(2)]/[write(2)] directly on the
-    secret memory. The kernel page cache keeps its own copy of any file that was
-    read; that is outside this library's reach. *)
+    zeroized. The functions here call the platform's descriptor I/O directly on
+    the secret memory ([read(2)]/[write(2)] on Unix and [ReadFile]/[WriteFile]
+    or [recv]/[send] on Windows). The kernel page cache keeps its own copy of
+    any file that was read; that is outside this library's reach. *)
 
 val read : Unix.file_descr -> Secret.t -> off:int -> len:int -> int
 (** [read fd t ~off ~len] reads at most [len] bytes into [t] at [off] with a
@@ -32,7 +33,7 @@ val read_file : ?hardened:bool -> ?max:int -> string -> Secret.t
     [Unix.Unix_error] on I/O errors. *)
 
 val write : Unix.file_descr -> Secret.t -> off:int -> len:int -> int
-(** A single [write(2)] from the secret memory; returns the bytes written. The
+(** A single OS write from the secret memory; returns the bytes written. The
     caller must not mutate or destroy the secret, or call {!Secret.wipe_all},
     while the write is in flight. *)
 

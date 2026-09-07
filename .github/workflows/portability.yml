@@ -72,12 +72,8 @@ jobs:
             dune build @install @runtest'
 
   windows:
-    name: windows-mingw / OCaml 5.4 (best effort)
+    name: windows-mingw / OCaml 5.4
     runs-on: windows-latest
-    # Runs on the path-filtered pull_request trigger too: skipping it there
-    # meant Windows regressions only surfaced after merge. Still best effort
-    # until the suite has proven stable there.
-    continue-on-error: true
     timeout-minutes: 45
     defaults:
       run:

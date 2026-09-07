@@ -98,19 +98,13 @@
 (test
  (name test_unix)
  (modules test_unix)
- (enabled_if
-  (and
-   (<> %{os_type} Win32)
-   %{lib-available:secret.unix}))
+ (enabled_if %{lib-available:secret.unix})
  (libraries secret secret.unix alcotest unix))
 
 (test
  (name test_unix_wipe)
  (modules test_unix_wipe)
- (enabled_if
-  (and
-   (<> %{os_type} Win32)
-   %{lib-available:secret.unix}))
+ (enabled_if %{lib-available:secret.unix})
  (libraries secret secret.unix helpers alcotest unix))
 
 (executable
