@@ -1,5 +1,11 @@
 # Changes
 
+## 0.1.3 (2026-09-07)
+
+- Provide `secret.unix` on Win32, using native handle and socket I/O directly
+  against zeroizable secret memory.
+- Make Windows portability CI required and run the direct-I/O tests there.
+
 ## 0.1.2 (2026-09-02)
 
 - Remove the upper bound on the OCaml version. It excluded every release

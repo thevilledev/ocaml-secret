@@ -32,6 +32,29 @@ let test_read_write () =
       Alcotest.check_raises "destroyed" Secret.Destroyed (fun () ->
           ignore (Secret_unix.read Unix.stdin u ~off:0 ~len:1)))
 
+let test_socket_roundtrip () =
+  let left, right =
+    Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.close left;
+      Unix.close right)
+    (fun () ->
+      let sent = Secret.of_string "socket-secret" in
+      let received = Secret.create (Secret.length sent) in
+      Fun.protect
+        ~finally:(fun () ->
+          Secret.destroy sent;
+          Secret.destroy received)
+        (fun () ->
+          Secret_unix.write_all left sent;
+          Secret_unix.read_exactly right received ~off:0
+            ~len:(Secret.length received);
+          Alcotest.(check bool)
+            "socket roundtrip" true
+            (Secret.equal sent received)))
+
 let test_errors () =
   (match Secret_unix.read_file "/nonexistent/secret.key" with
   | _ -> Alcotest.fail "expected Unix_error"
@@ -50,6 +73,7 @@ let () =
       ( "unix",
         [
           Alcotest.test_case "read/write" `Quick test_read_write;
+          Alcotest.test_case "socket roundtrip" `Quick test_socket_roundtrip;
           Alcotest.test_case "errors" `Quick test_errors;
         ] );
     ]
